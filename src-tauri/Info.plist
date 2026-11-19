@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Raketo connects to your thermal printer over Bluetooth.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Raketo can take a photo with the camera to print it.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Raketo shares the printer with other devices on your network.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_ipp._tcp</string>
+    <string>_http._tcp</string>
+  </array>
+</dict>
+</plist>

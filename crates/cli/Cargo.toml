@@ -1,0 +1,16 @@
+[package]
+name = "raketo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "raketo-cli"
+path = "src/main.rs"
+
+[dependencies]
+raketo-core = { path = "../core" }
+raketo-bt = { path = "../bt" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
+anyhow = "1"

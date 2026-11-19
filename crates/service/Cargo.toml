@@ -1,0 +1,16 @@
+[package]
+name = "raketo-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared printer state, job queue and settings for the desktop app and the LAN server"
+
+[dependencies]
+raketo-core = { path = "../core" }
+raketo-bt = { path = "../bt" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
+thiserror = "2"
+log = "0.4"

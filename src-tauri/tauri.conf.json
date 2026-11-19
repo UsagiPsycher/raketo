@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Raketo",
+  "version": "0.1.0",
+  "identifier": "app.raketo.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1430",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Raketo",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 860,
+        "minHeight": 560,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Print on mini thermal printers and share them on your network",
+    "publisher": "Raketo",
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "windows/hooks.nsh",
+        "languages": [
+          "French",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "category": "Utility",
+    "longDescription": "Desktop app for the pocket thermal printers that work with the iPrint app: photos, text, documents, labels, notes and banners, with sharing over the local network as a driverless IPP printer.",
+    "copyright": "Copyright (c) 2026 UsagiPsycher",
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "bluez"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "bluez"
+        ]
+      }
+    }
+  }
+}

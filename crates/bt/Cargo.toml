@@ -1,0 +1,36 @@
+[package]
+name = "raketo-bt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bluetooth transports (BLE GATT and classic RFCOMM) for iPrint-compatible printers"
+
+[dependencies]
+raketo-core = { path = "../core" }
+btleplug = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+futures = "0.3"
+uuid = "1"
+thiserror = "2"
+async-trait = "0.1"
+rand = "0.8"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Foundation",
+  "Devices_Bluetooth",
+  "Devices_Enumeration",
+  "Win32_Foundation",
+  "Win32_Networking_WinSock",
+  "Win32_Devices_Bluetooth",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+bluer = { version = "0.17", features = ["bluetoothd"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray"] }
