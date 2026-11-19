@@ -1,0 +1,11 @@
+[package]
+name = "raketo-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The `raketo` command: prints through a running Raketo app"
+
+[dependencies]
+ureq = { version = "2", default-features = false, features = ["json"] }
+serde_json = "1"
+dirs = "6"

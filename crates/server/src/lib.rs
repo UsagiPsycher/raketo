@@ -7,9 +7,10 @@
 #[allow(dead_code)]
 mod ipp;
 mod raster;
+pub mod text;
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State as AxState};
+use axum::extract::{DefaultBodyLimit, Query, State as AxState};
 use axum::http::{header, HeaderMap, StatusCode, Uri};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -96,8 +97,11 @@ struct IppJob {
     copies: i32,
 }
 
-pub async fn start(svc: Service, port: u16, name: String) -> std::io::Result<Server> {
-    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?;
+/// Starts the server. With `lan`, it listens on every interface and announces
+/// itself over mDNS; otherwise only this computer can reach it (local API).
+pub async fn start(svc: Service, port: u16, name: String, lan: bool) -> std::io::Result<Server> {
+    let bind = if lan { [0, 0, 0, 0] } else { [127, 0, 0, 1] };
+    let listener = tokio::net::TcpListener::bind(SocketAddr::from((bind, port))).await?;
     let port = listener.local_addr()?.port();
     let host = gethostname::gethostname().to_string_lossy().into_owned();
     let uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, format!("raketo.{host}.{name}").as_bytes()).to_string();
@@ -114,6 +118,9 @@ pub async fn start(svc: Service, port: u16, name: String) -> std::io::Result<Ser
         .route("/api/preview", post(api_preview))
         .route("/api/print", post(api_print))
         .route("/api/events", get(api_events))
+        .route("/print", post(simple_print))
+        .route("/print/text", post(simple_print_text))
+        .route("/status", get(simple_status))
         .fallback(get(static_file))
         .layer(DefaultBodyLimit::max(96 * 1024 * 1024))
         .with_state(app);
@@ -128,6 +135,17 @@ pub async fn start(svc: Service, port: u16, name: String) -> std::io::Result<Ser
             .ok();
     });
 
+    if !lan {
+        let info = ShareInfo {
+            port,
+            name,
+            urls: vec![format!("http://127.0.0.1:{port}/")],
+            ipp: vec![format!("ipp://127.0.0.1:{port}/ipp/print")],
+            local_url: None,
+            firewall_blocked: false,
+        };
+        return Ok(Server { stop: Some(tx), mdns: None, info });
+    }
     let ips = lan_ips();
     let suffix = if port == 80 { String::new() } else { format!(":{port}") };
     let urls = ips.iter().map(|ip| format!("http://{ip}{suffix}/")).collect();
@@ -372,6 +390,193 @@ async fn api_events(AxState(app): AxState<App>) -> Sse<impl Stream<Item = Result
         .filter_map(|e| e.ok())
         .map(|e| Ok(SseEvent::default().data(serde_json::to_string(&e).unwrap_or_default())));
     Sse::new(first.chain(rest)).keep_alive(KeepAlive::default())
+}
+
+// ---------- Simple API: raw body in, result out ----------
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct SimpleQuery {
+    #[serde(alias = "mode")]
+    content: Option<String>,
+    gray: Option<String>,
+    density: Option<u8>,
+    copies: Option<u32>,
+    label: Option<String>,
+    label_height: Option<u32>,
+    /// `0` returns as soon as the job is queued.
+    wait: Option<String>,
+    /// Trims blank margins (useful for pages rendered at A4).
+    trim: Option<String>,
+    // Text only
+    size: Option<f32>,
+    bold: Option<String>,
+    align: Option<String>,
+}
+
+fn flag(v: &Option<String>) -> bool {
+    matches!(v.as_deref(), Some("1" | "true" | "yes" | "on" | ""))
+}
+
+impl SimpleQuery {
+    fn options(&self, default: Content) -> JobOptions {
+        let content = match self.content.as_deref() {
+            Some("text") => Content::Text,
+            Some("image") | Some("drawing") => Content::Image,
+            Some("photo") => Content::Photo,
+            _ => default,
+        };
+        JobOptions {
+            content,
+            gray: flag(&self.gray),
+            density: self.density.unwrap_or(4).clamp(1, 7),
+            copies: self.copies.unwrap_or(1).clamp(1, 50),
+            label: flag(&self.label),
+            label_height_mm: self.label_height,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SimpleResult {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    job: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+/// Stable error codes for scripts, from service error messages.
+fn error_code(msg: &str) -> String {
+    if let Some(c) = msg.strip_prefix("printer problem: ") {
+        return c.to_string();
+    }
+    if msg.contains("no printer connected") {
+        return "not_connected".into();
+    }
+    if msg.contains("unreadable image") || msg.contains("nothing to print") {
+        return "bad_document".into();
+    }
+    "print_failed".into()
+}
+
+fn fail(status: StatusCode, code: &str, message: impl ToString) -> Response {
+    (status, Json(SimpleResult { ok: false, job: None, error: Some(code.into()), message: Some(message.to_string()) })).into_response()
+}
+
+async fn run_simple(app: &App, pages: Vec<Vec<u8>>, options: JobOptions, wait: bool, source: String) -> Response {
+    if app.svc.state().printer.is_none() {
+        return fail(StatusCode::SERVICE_UNAVAILABLE, "not_connected", "no printer connected in Raketo");
+    }
+    let mut rx = app.svc.subscribe();
+    let id = match app.svc.print(PrintRequest { pages, options, source }) {
+        Ok(id) => id,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, &error_code(&e.to_string()), e),
+    };
+    if !wait {
+        return (StatusCode::ACCEPTED, Json(SimpleResult { ok: true, job: Some(id), error: None, message: None })).into_response();
+    }
+    loop {
+        match rx.recv().await {
+            Ok(ServiceEvent::JobDone { job, ok, error }) if job == id => {
+                return if ok {
+                    Json(SimpleResult { ok: true, job: Some(id), error: None, message: None }).into_response()
+                } else {
+                    let msg = error.unwrap_or_default();
+                    let code = error_code(&msg);
+                    let status = if code == "not_connected" { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::CONFLICT };
+                    (status, Json(SimpleResult { ok: false, job: Some(id), error: Some(code), message: Some(msg) })).into_response()
+                };
+            }
+            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(_) => return fail(StatusCode::INTERNAL_SERVER_ERROR, "print_failed", "service stopped"),
+        }
+    }
+}
+
+fn png(img: &image::DynamicImage) -> Option<Vec<u8>> {
+    let mut b = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut b), image::ImageFormat::Png).ok()?;
+    Some(b)
+}
+
+async fn simple_print(
+    AxState(app): AxState<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    Query(q): Query<SimpleQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if body.is_empty() {
+        return fail(StatusCode::BAD_REQUEST, "bad_document", "empty body: send an image");
+    }
+    if body.starts_with(b"%PDF") {
+        return fail(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_format",
+            "PDF is not rendered by the API yet: print it to the Raketo printer, or send an image",
+        );
+    }
+    let ctype = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let Some(pages) = raster::decode(&ctype, &body) else {
+        return fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_format", "send PNG, JPEG, GIF, WebP, BMP, PWG raster or URF");
+    };
+    let pages: Vec<_> = if flag(&q.trim) { pages.iter().filter_map(raster::trim).collect() } else { pages };
+    let encoded: Vec<Vec<u8>> = pages.iter().filter_map(png).collect();
+    let wait = q.wait.as_deref() != Some("0");
+    run_simple(&app, encoded, q.options(Content::Image), wait, peer.ip().to_string()).await
+}
+
+async fn simple_print_text(
+    AxState(app): AxState<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    Query(q): Query<SimpleQuery>,
+    body: Bytes,
+) -> Response {
+    let text = String::from_utf8_lossy(&body).to_string();
+    if text.trim().is_empty() {
+        return fail(StatusCode::BAD_REQUEST, "bad_document", "empty body: send the text to print");
+    }
+    let Some(width) = app.svc.state().printer.map(|p| p.width_px) else {
+        return fail(StatusCode::SERVICE_UNAVAILABLE, "not_connected", "no printer connected in Raketo");
+    };
+    let style = text::Style {
+        size: q.size.unwrap_or(28.0),
+        bold: flag(&q.bold),
+        align: match q.align.as_deref() {
+            Some("center") => text::Align::Center,
+            Some("right") => text::Align::Right,
+            _ => text::Align::Left,
+        },
+    };
+    let img = tokio::task::spawn_blocking(move || text::render(&text, width, &style)).await;
+    let Some(page) = img.ok().and_then(|i| png(&image::DynamicImage::ImageLuma8(i))) else {
+        return fail(StatusCode::INTERNAL_SERVER_ERROR, "print_failed", "text rendering failed");
+    };
+    let wait = q.wait.as_deref() != Some("0");
+    run_simple(&app, vec![page], q.options(Content::Text), wait, peer.ip().to_string()).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SimpleStatus {
+    connected: bool,
+    busy: bool,
+    queue: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    printer: Option<raketo_service::State>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    problem: Option<&'static str>,
+}
+
+async fn simple_status(AxState(app): AxState<App>) -> Response {
+    let st = app.svc.state();
+    let problem = st.status.as_ref().and_then(|s| s.problem());
+    let connected = st.printer.is_some();
+    Json(SimpleStatus { connected, busy: st.busy, queue: st.queue, problem, printer: if connected { Some(st) } else { None } }).into_response()
 }
 
 // ---------- IPP ----------

@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "ab_glyph"
+version = "0.2.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01c0457472c38ea5bd1c3b5ada5e368271cb550be7a4ca4a0b4634e9913f6cc2"
+dependencies = [
+ "ab_glyph_rasterizer",
+ "owned_ttf_parser",
+]
+
+[[package]]
+name = "ab_glyph_rasterizer"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -931,6 +947,15 @@ dependencies = [
  "block-buffer 0.12.1",
  "const-oid",
  "crypto-common 0.2.2",
+]
+
+[[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys",
 ]
 
 [[package]]
@@ -2846,6 +2871,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "owned_ttf_parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
+dependencies = [
+ "ttf-parser",
+]
+
+[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3214,9 +3248,10 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raketo"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "raketo-client",
  "raketo-core",
  "raketo-server",
  "raketo-service",
@@ -3230,7 +3265,7 @@ dependencies = [
 
 [[package]]
 name = "raketo-bt"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "bluer",
@@ -3251,7 +3286,7 @@ dependencies = [
 
 [[package]]
 name = "raketo-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "image",
@@ -3261,8 +3296,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "raketo-client"
+version = "0.2.0"
+dependencies = [
+ "dirs 6.0.0",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
+name = "raketo-cmd"
+version = "0.2.0"
+dependencies = [
+ "raketo-client",
+]
+
+[[package]]
 name = "raketo-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "image",
@@ -3274,8 +3325,9 @@ dependencies = [
 
 [[package]]
 name = "raketo-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "ab_glyph",
  "axum",
  "base64 0.22.1",
  "futures",
@@ -3297,7 +3349,7 @@ dependencies = [
 
 [[package]]
 name = "raketo-service"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "image",
  "log",
@@ -4219,7 +4271,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cookie",
- "dirs",
+ "dirs 7.0.0",
  "dunce",
  "embed_plist",
  "getrandom 0.3.4",
@@ -4269,7 +4321,7 @@ checksum = "73d80784e874fa117b9b00a6680cf2f9b8a51bbd14406bea980cf8f328b00646"
 dependencies = [
  "anyhow",
  "cargo_toml",
- "dirs",
+ "dirs 7.0.0",
  "glob",
  "heck 0.5.0",
  "json-patch",
@@ -4739,7 +4791,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2b9c52859a94554803ccd4a24b98f74148ebc73b90676d783f3490b1bff9d72"
 dependencies = [
  "crossbeam-channel",
- "dirs",
+ "dirs 7.0.0",
  "libappindicator",
  "muda",
  "objc2 0.6.5",
@@ -4759,6 +4811,12 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "typeid"
@@ -4789,6 +4847,20 @@ name = "unicode-segmentation"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
+
+[[package]]
+name = "ureq"
+version = "2.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "url",
+]
 
 [[package]]
 name = "url"
@@ -5631,7 +5703,7 @@ dependencies = [
  "block2 0.6.2",
  "cookie",
  "crossbeam-channel",
- "dirs",
+ "dirs 7.0.0",
  "dom_query 0.29.0",
  "dpi",
  "dunce",

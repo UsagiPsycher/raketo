@@ -9,9 +9,10 @@ use tokio::sync::Mutex;
 #[cfg(windows)]
 mod firewall;
 
-/// Running LAN server, if any, and the firewall check done this session.
+/// The running server with its mode (`true` = shared on the LAN), and the
+/// firewall check done this session.
 #[derive(Default)]
-struct Share(Mutex<Option<Server>>, Mutex<Option<bool>>);
+struct Share(Mutex<Option<(Server, bool)>>, Mutex<Option<bool>>);
 
 const DEFAULT_PORT: u16 = 8631;
 
@@ -23,54 +24,62 @@ fn share_name(svc: &Service) -> String {
     })
 }
 
-/// Starts or stops the server to match the setting and the connection.
+/// Tells local clients (the `raketo` CLI) where the API listens.
+fn write_discovery(app: &tauri::AppHandle, port: u16) {
+    if let Ok(dir) = app.path().app_config_dir() {
+        std::fs::create_dir_all(&dir).ok();
+        let body = serde_json::json!({ "port": port, "url": format!("http://127.0.0.1:{port}"), "pid": std::process::id() });
+        std::fs::write(dir.join("api.json"), body.to_string()).ok();
+    }
+}
+
+async fn firewall_allowed(share: &Share) -> bool {
+    let mut checked = share.1.lock().await;
+    if let Some(v) = *checked {
+        return v;
+    }
+    #[cfg(windows)]
+    let v = tokio::task::spawn_blocking(firewall::ensure).await.unwrap_or(false);
+    #[cfg(not(windows))]
+    let v = true;
+    *checked = Some(v);
+    v
+}
+
+/// Keeps the server in the right mode: shared on the LAN while sharing is on
+/// and a printer is connected, local-only (API for this computer) otherwise.
 async fn sync_share(app: &tauri::AppHandle) {
     let svc = app.state::<Service>().inner().clone();
     let share = app.state::<Share>();
     let mut cur = share.0.lock().await;
-    let want = svc.settings().share_on_lan && svc.state().printer.is_some();
-    match (want, cur.is_some()) {
-        (true, false) => {
-            // Open the firewall before the port, so Windows never prompts.
-            let allowed = {
-                let mut checked = share.1.lock().await;
-                match *checked {
-                    Some(v) => v,
-                    None => {
-                        #[cfg(windows)]
-                        let v = tokio::task::spawn_blocking(firewall::ensure).await.unwrap_or(false);
-                        #[cfg(not(windows))]
-                        let v = true;
-                        *checked = Some(v);
-                        v
-                    }
-                }
-            };
-            // Port 80 gives a plain http://raketo.local address when it is free.
-            let mut ports = vec![80, svc.settings().lan_port.unwrap_or(DEFAULT_PORT), 0];
-            ports.dedup();
-            for port in ports {
-                if let Ok(mut s) = raketo_server::start(svc.clone(), port, share_name(&svc)).await {
-                    s.info.firewall_blocked = !allowed;
-                    app.emit("share", Some(s.info.clone())).ok();
-                    *cur = Some(s);
-                    break;
-                }
-            }
+    let lan = svc.settings().share_on_lan && svc.state().printer.is_some();
+    if cur.as_ref().is_some_and(|(_, mode)| *mode == lan) {
+        return;
+    }
+    if let Some((s, _)) = cur.take() {
+        s.stop();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    // Open the firewall before the port, so Windows never prompts.
+    let allowed = if lan { firewall_allowed(&share).await } else { true };
+    let configured = svc.settings().lan_port.unwrap_or(DEFAULT_PORT);
+    // Port 80 gives a plain http://raketo.local address when it is free.
+    let mut ports = if lan { vec![80, configured, 0] } else { vec![configured, 0] };
+    ports.dedup();
+    for port in ports {
+        if let Ok(mut s) = raketo_server::start(svc.clone(), port, share_name(&svc), lan).await {
+            s.info.firewall_blocked = !allowed;
+            write_discovery(app, s.info.port);
+            app.emit("share", if lan { Some(s.info.clone()) } else { None }).ok();
+            *cur = Some((s, lan));
+            break;
         }
-        (false, true) => {
-            if let Some(s) = cur.take() {
-                s.stop();
-            }
-            app.emit("share", None::<ShareInfo>).ok();
-        }
-        _ => {}
     }
 }
 
 #[tauri::command]
 async fn share_info(share: tauri::State<'_, Share>) -> Res<Option<ShareInfo>> {
-    Ok(share.0.lock().await.as_ref().map(|s| s.info.clone()))
+    Ok(share.0.lock().await.as_ref().filter(|(_, lan)| *lan).map(|(s, _)| s.info.clone()))
 }
 
 #[tauri::command]
@@ -85,7 +94,7 @@ async fn set_share(app: tauri::AppHandle, svc: tauri::State<'_, Service>, enable
 async fn retry_firewall(app: tauri::AppHandle) -> Res<()> {
     let share = app.state::<Share>();
     *share.1.lock().await = None;
-    if let Some(s) = share.0.lock().await.take() {
+    if let Some((s, _)) = share.0.lock().await.take() {
         s.stop();
     }
     sync_share(&app).await;
@@ -210,8 +219,11 @@ pub fn run() {
             let svc = Service::new(dir);
             let handle = app.handle().clone();
             let (s2, mut rx) = (svc.clone(), svc.subscribe());
+            let h0 = handle.clone();
             tauri::async_runtime::spawn(async move {
                 s2.start();
+                // Local API from launch, even before a printer connects.
+                sync_share(&h0).await;
                 let mut connected = false;
                 loop {
                     match rx.recv().await {

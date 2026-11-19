@@ -17,7 +17,7 @@ Get the latest build from [Releases](https://github.com/UsagiPsycher/raketo/rele
 
 | System | File |
 |--------|------|
-| Windows 10/11 | `Raketo_x.y.z_x64-setup.exe` (installer), or `Raketo_x.y.z_x64_portable.exe` (no install) |
+| Windows 10/11 | `Raketo_x.y.z_x64-setup.exe` (installer), or `Raketo_x.y.z_x64_portable.zip` (no install) |
 | macOS 11+ | `Raketo_x.y.z_aarch64.dmg` (Apple Silicon), `Raketo_x.y.z_x64.dmg` (Intel) |
 | Linux | `.AppImage` (any distribution), `.deb` (Debian, Ubuntu), `.rpm` (Fedora, openSUSE) |
 
@@ -83,6 +83,72 @@ second one is `raketo-2.local`.
 
 There is no authentication: anyone on the local network can print.
 
+## Printing from scripts and other apps
+
+While Raketo is open, any program on the computer can print through it. The
+API listens on `127.0.0.1` at all times, and on the network too while sharing
+is on.
+
+### Command line
+
+```sh
+raketo print photo.jpg --gray
+raketo print receipt.png --mode text --copies 2
+raketo text "Order 42: two coffees" --size 40 --bold --center
+some-command | raketo text -
+raketo status
+```
+
+Options: `--mode text|image|photo`, `--gray`, `--density 1-7`, `--copies n`,
+`--label`, `--label-height mm`, `--trim`, `--no-wait`; for text, `--size px`,
+`--bold`, `--center`, `--right`. `--url` (or `RAKETO_URL`) targets Raketo on
+another computer, `--json` prints the raw reply. Run `raketo help` for the
+full list.
+
+Exit codes: `0` printed, `1` usage error, `2` Raketo not running, `3` no
+printer connected, `4` printer problem (paper, cover, heat), `5` document or
+other error.
+
+Where the command lives:
+
+- **Windows**: the installer puts `raketo` on `PATH`. In the portable zip,
+  run `raketo` from the extracted folder.
+- **Linux**: the `.deb` and `.rpm` install `/usr/bin/raketo`; with the
+  AppImage, run `./Raketo_x.y.z_amd64.AppImage print photo.jpg`.
+- **macOS**: link it once with
+  `ln -s /Applications/Raketo.app/Contents/MacOS/raketo /usr/local/bin/raketo`.
+
+### HTTP
+
+The command is a thin wrapper around three endpoints, usable from any
+language:
+
+```sh
+curl --data-binary @photo.jpg "http://127.0.0.1:8631/print?gray=1"
+curl --data "Hello" "http://127.0.0.1:8631/print/text?size=40&bold=1&align=center"
+curl http://127.0.0.1:8631/status
+```
+
+- `POST /print`: the body is an image (PNG, JPEG, GIF, WebP, BMP, PWG raster
+  or URF).
+- `POST /print/text`: the body is UTF-8 text, laid out by Raketo.
+- Query parameters: `mode`, `gray`, `density`, `copies`, `label`,
+  `label_height`, `trim`, `wait=0`; for text, `size`, `bold`, `align`.
+
+Replies are JSON: `{"ok":true,"job":3}` once the print is done (or queued with
+`wait=0`), otherwise `{"ok":false,"error":"no_paper","message":"…"}` with an
+HTTP error status. Error codes: `not_connected`, `no_paper`, `cover_open`,
+`overheat`, `label_not_found`, `unsupported_format`, `bad_document`,
+`print_failed`.
+
+The port is 8631, or 80 while sharing when 80 is free. The app writes the
+current one to `api.json` in its configuration folder
+(`%APPDATA%\app.raketo.desktop` on Windows,
+`~/Library/Application Support/app.raketo.desktop` on macOS,
+`~/.config/app.raketo.desktop` on Linux). The `raketo` command reads that
+file. PDF files are not rendered by the API yet; print them to the Raketo
+printer instead.
+
 ## Building
 
 Requirements: [Rust](https://rustup.rs) (stable) and Node.js 20.
@@ -99,11 +165,13 @@ Debian or Ubuntu:
 sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
 ```
 
-On Windows, `build.bat` builds the portable exe and the installer.
+On Windows, `build.bat` builds the installer, the portable zip and the
+`raketo` command.
 
-For development, `npx tauri dev` runs the app with hot reload. `raketo-cli`
-(`cargo run -p raketo-cli -- scan`) lists printers, prints a file and
-prints test patterns without the interface.
+For development, `npx tauri dev` runs the app with hot reload. On Windows,
+build the command once first (`build.bat` does it), since the app bundles it.
+`cargo run -p raketo-cli -- scan` drives a printer directly, without the app,
+for protocol tests.
 
 ## Layout
 
@@ -112,7 +180,9 @@ crates/core      model catalogue, frames, raster encoders, printer replies
 crates/bt        Bluetooth LE (btleplug) and RFCOMM (Windows, Linux, macOS), pairing
 crates/service   connection, print queue, per-printer settings
 crates/server    web page, JSON API, IPP Everywhere endpoint, mDNS
-crates/cli       command-line tool for tests
+crates/client    the `raketo` command (talks to the running app)
+crates/cmd       console build of that command (raketo.com on Windows)
+crates/cli       low-level test tool that drives a printer directly
 src-tauri        desktop app
 src              interface (React), shared by the app and the web page
 docs/protocol.md the printer protocol

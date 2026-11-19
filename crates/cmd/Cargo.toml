@@ -1,0 +1,13 @@
+[package]
+name = "raketo-cmd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Console build of the `raketo` command (raketo.com on Windows)"
+
+[[bin]]
+name = "raketo-cmd"
+path = "src/main.rs"
+
+[dependencies]
+raketo-client = { path = "../client" }
