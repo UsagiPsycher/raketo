@@ -1,0 +1,48 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      - run: npm ci
+
+      # Type-checks the interface and builds the files the server embeds.
+      - run: npm run build
+
+      - name: Windows command line
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build -p raketo-cmd --release
+          mkdir -p src-tauri/binaries
+          cp target/release/raketo-cmd.exe src-tauri/binaries/raketo-cmd-x86_64-pc-windows-msvc.exe
+
+      - run: cargo build --workspace --locked
+
+      - run: cargo test --workspace --exclude raketo --locked
