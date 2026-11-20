@@ -74,11 +74,14 @@ with an optional dashed cut line between sheets. Jobs sent from other devices
 or scripts with `--queue` land in the same queue.
 
 **Custom layouts.** The Custom tool is a free layout editor on a strip of
-paper at the printer's width. Add text boxes, pictures, lines, dashed lines,
-circles and rectangles from the bar, with a click or by dragging them onto
-the paper, then move, resize and rotate them with the mouse. Each text box
-has its own font, size, style, alignment and angle, and can print white on
-black. The paper length either follows the content or is fixed. Changes can
+paper at the printer's width. Add text boxes, pictures, circles and
+rectangles from the bar, with a click or by dragging them onto the paper,
+then move, resize and rotate them with the mouse. Lines and dashed lines are
+drawn like in a paint program: click for the start, click again for the end,
+in any direction; hold Shift for a horizontal, vertical or 45° line. Each
+text box has its own font (built-in or any font installed on the computer),
+size, style, alignment and angle, and can print white on black. The paper
+length follows the content, or is set by dragging the bottom edge. Changes can
 be undone with Ctrl+Z, and the current layout is kept between sessions.
 
 Layouts are saved as `.rkt` files: JSON with the paper width and length in
@@ -103,7 +106,10 @@ the format is our own, but it is plain text and easy to generate:
 }
 ```
 
-Other item types are `image` (with `image`, a key in `images`, and
+`font` is `sans`, `serif`, `mono`, `round`, or the family name of an
+installed font; a printer computer without that font uses the default one.
+A line is a box as wide as the line is long, as high as it is thick, turned
+by `rotate`. Other item types are `image` (with `image`, a key in `images`, and
 `brightness`, `contrast`, `invert`, `flip`), `line` and `ellipse`. Missing
 fields take their defaults; a layout opened on a printer of another width is
 scaled to fit.

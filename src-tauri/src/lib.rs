@@ -229,6 +229,29 @@ async fn print_gray_wedge(svc: tauri::State<'_, Service>) -> Res<u64> {
     svc.print_gray_wedge().map_err(err)
 }
 
+/// Font families installed on this computer, for the Custom tool.
+#[tauri::command]
+async fn system_fonts() -> Res<Vec<String>> {
+    tokio::task::spawn_blocking(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let mut names: Vec<String> = db
+            .faces()
+            .filter_map(|f| {
+                let en = f.families.iter().find(|(_, l)| *l == fontdb::Language::English_UnitedStates);
+                en.or(f.families.first()).map(|(n, _)| n.clone())
+            })
+            // Hidden system faces start with a dot on macOS.
+            .filter(|n| !n.is_empty() && !n.starts_with('.'))
+            .collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        names
+    })
+    .await
+    .map_err(err)
+}
+
 /// Asks where to save a Custom layout and writes it; `None` when cancelled.
 #[tauri::command]
 async fn save_layout(app: tauri::AppHandle, name: String, contents: String) -> Res<Option<String>> {
@@ -381,6 +404,7 @@ pub fn run() {
             get_autostart,
             set_autostart,
             save_layout,
+            system_fonts,
             queue_state,
             queue_add,
             queue_remove,

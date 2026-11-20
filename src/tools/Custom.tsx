@@ -28,12 +28,15 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { t } from "../i18n";
-import { FONTS, fileToDataUrl, loadImage, type Align, type FontId } from "../lib/canvas";
+import { fileToDataUrl, loadImage, type Align } from "../lib/canvas";
 import {
   bounds,
   emptyLayout,
   LINE,
+  lineBetween,
+  lineEnds,
   makeItem,
+  MIN_LENGTH,
   newId,
   PAD,
   paperLength,
@@ -42,6 +45,7 @@ import {
   renderItem,
   renderLayout,
   serialize,
+  straighten,
   textFont,
   textHeight,
   type ImageItem,
@@ -51,6 +55,7 @@ import {
   type ShapeItem,
   type TextItem,
 } from "../lib/rkt";
+import { FontPicker } from "./FontPicker";
 import { Range, Segmented, Toggle, type ToolProps } from "./ui";
 
 const STORE = "raketo.custom";
@@ -62,7 +67,12 @@ type History = { past: Layout[]; now: Layout; future: Layout[] };
 type Drag =
   | { kind: "move"; id: number; start: Item; x0: number; y0: number; moved: boolean }
   | { kind: "resize"; id: number; start: Item; x0: number; y0: number; hx: number; hy: number }
-  | { kind: "rotate"; id: number; start: Item; cx: number; cy: number };
+  | { kind: "rotate"; id: number; start: Item; cx: number; cy: number }
+  | { kind: "end"; id: number; start: Item; end: 0 | 1; fixed: [number, number] }
+  | { kind: "length" };
+type Pt = [number, number];
+/** A line being drawn: first click made, waiting for the second one. */
+type Draft = { from: Pt; to: Pt; x0: number; y0: number; pressed: boolean; dragged: boolean };
 
 const round = (v: number, d = 10) => Math.round(v * d) / d;
 
@@ -131,6 +141,14 @@ export function Custom({ ctx, onOutput }: ToolProps) {
   });
   const [note, setNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [dropping, setDropping] = useState(false);
+  // Line drawing mode, entered from the bar, like the line tool of a paint program.
+  const [drawMode, setDrawMode] = useState<{ dashed: boolean } | null>(null);
+  const [draft, setDraftState] = useState<Draft | null>(null);
+  const draftRef = useRef<Draft | null>(null);
+  const setDraft = (d: Draft | null) => {
+    draftRef.current = d;
+    setDraftState(d ? { ...d } : null);
+  };
   useEffect(() => {
     if (!note) return;
     const id = setTimeout(() => setNote(null), 5000);
@@ -169,8 +187,8 @@ export function Custom({ ctx, onOutput }: ToolProps) {
   const sel = layout.items.find((i) => i.id === selected) ?? null;
 
   // Keeps a fresh copy of the state for the window listeners.
-  const live = useRef({ hist, selected, editing, k, layout });
-  live.current = { hist, selected, editing, k, layout };
+  const live = useRef({ hist, selected, editing, k, layout, drawMode });
+  live.current = { hist, selected, editing, k, layout, drawMode };
 
   /** Records a change. Changes with the same key in quick succession make one undo step. */
   const commit = (next: Layout, key?: string) => {
@@ -340,6 +358,43 @@ export function Custom({ ctx, onOutput }: ToolProps) {
     return { mx: (clientX - r.left) / live.current.k, my: (clientY - r.top) / live.current.k };
   };
 
+  const finishLine = (from: Pt, to: Pt) => {
+    setDraft(null);
+    if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 0.5) return;
+    const { layout, drawMode } = live.current;
+    const base = makeItem("line", 0, 0, layout.width, { dashed: !!drawMode?.dashed });
+    const item = lineBetween(base, from[0], from[1], to[0], to[1]);
+    commit({ ...layout, items: [...layout.items, item] });
+    setSelected(item.id);
+  };
+  const startDrawing = (dashed: boolean) => {
+    setDraft(null);
+    setEditing(null);
+    setDrawMode((m) => (m && m.dashed === dashed ? null : { dashed }));
+  };
+  /** In drawing mode, clicks on the paper place the ends of a line instead of selecting. */
+  const onPaperDownCapture = (e: ReactPointerEvent) => {
+    if (!drawMode || e.button !== 0 || (e.target as HTMLElement).classList.contains("paper-grip")) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const { mx, my } = toMm(e.clientX, e.clientY);
+    const d = draftRef.current;
+    if (!d) setDraft({ from: [mx, my], to: [mx, my], x0: e.clientX, y0: e.clientY, pressed: true, dragged: false });
+    else finishLine(d.from, e.shiftKey ? straighten(d.from, [mx, my]) : [mx, my]);
+  };
+  const startEnd = (e: ReactPointerEvent, it: Item, end: 0 | 1) => {
+    e.stopPropagation();
+    e.preventDefault();
+    checkpoint();
+    drag.current = { kind: "end", id: it.id, start: it, end, fixed: lineEnds(it)[end === 0 ? 1 : 0] };
+  };
+  const startLength = (e: ReactPointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    checkpoint();
+    drag.current = { kind: "length" };
+  };
+
   const startMove = (e: ReactPointerEvent, it: Item) => {
     if (e.button !== 0 || editing === it.id) return;
     e.stopPropagation();
@@ -363,10 +418,30 @@ export function Custom({ ctx, onOutput }: ToolProps) {
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
+      const dr = draftRef.current;
+      if (dr && paper.current) {
+        const { mx, my } = toMm(e.clientX, e.clientY);
+        if (dr.pressed && Math.hypot(e.clientX - dr.x0, e.clientY - dr.y0) > 4) dr.dragged = true;
+        setDraft({ ...dr, to: e.shiftKey ? straighten(dr.from, [mx, my]) : [mx, my] });
+        return;
+      }
       const d = drag.current;
       if (!d) return;
       const { k, layout } = live.current;
+      if (d.kind === "length") {
+        const { my } = toMm(e.clientX, e.clientY);
+        preview({ ...layout, length: Math.max(MIN_LENGTH, Math.round(my)) });
+        return;
+      }
       const st = d.start;
+      if (d.kind === "end") {
+        const { mx, my } = toMm(e.clientX, e.clientY);
+        const p: Pt = e.shiftKey ? straighten(d.fixed, [mx, my]) : [mx, my];
+        const [a, b] = d.end === 0 ? [p, d.fixed] : [d.fixed, p];
+        const next = lineBetween(st, a[0], a[1], b[0], b[1]);
+        preview({ ...layout, items: layout.items.map((i) => (i.id === d.id ? next : i)) });
+        return;
+      }
       if (d.kind === "move") {
         const dx = (e.clientX - d.x0) / k;
         const dy = (e.clientY - d.y0) / k;
@@ -440,6 +515,12 @@ export function Custom({ ctx, onOutput }: ToolProps) {
       }
     };
     const onUp = () => {
+      const dr = draftRef.current;
+      if (dr?.pressed) {
+        // Press, drag and release draws the line in one go; a plain click waits for the second one.
+        if (dr.dragged) finishLine(dr.from, dr.to);
+        else draftRef.current = { ...dr, pressed: false };
+      }
       drag.current = null;
       setGuides([]);
     };
@@ -467,8 +548,12 @@ export function Custom({ ctx, onOutput }: ToolProps) {
       }
       if (mod && key === "y" && !typing) return e.preventDefault(), redo();
       if (typing) return;
-      const { selected, layout } = live.current;
-      if (key === "escape") return setSelected(null);
+      const { selected, layout, drawMode } = live.current;
+      if (key === "escape") {
+        if (draftRef.current) return setDraft(null);
+        if (drawMode) return setDrawMode(null);
+        return setSelected(null);
+      }
       if (selected === null) return;
       const it = layout.items.find((i) => i.id === selected);
       if (!it) return;
@@ -520,15 +605,17 @@ export function Custom({ ctx, onOutput }: ToolProps) {
     addImages(files, at);
   };
 
-  const palette: { type: ItemType; label: string; icon: typeof Type; extra?: Partial<ShapeItem> }[] = [
+  const palette: { type: ItemType; label: string; icon: typeof Type; extra?: Partial<ShapeItem>; draw?: boolean }[] = [
     { type: "text", label: t.customAdd.text, icon: Type },
     { type: "image", label: t.customAdd.image, icon: ImagePlus },
-    { type: "line", label: t.customAdd.line, icon: Minus },
-    { type: "line", label: t.customAdd.dashed, icon: Minus, extra: { dashed: true } },
+    { type: "line", label: t.customAdd.line, icon: Minus, draw: true },
+    { type: "line", label: t.customAdd.dashed, icon: Minus, extra: { dashed: true }, draw: true },
     { type: "ellipse", label: t.customAdd.ellipse, icon: Circle },
     { type: "rect", label: t.customAdd.rect, icon: Square },
   ];
   const addFromPalette = (p: (typeof palette)[number], at?: { cx: number; cy: number }) => {
+    if (p.draw) return startDrawing(!!p.extra?.dashed);
+    setDrawMode(null);
     if (!p.extra) return add(p.type, at);
     const spot = at ?? nextSpot(0.6);
     const item = makeItem(p.type, spot.cx, spot.cy, layout.width, p.extra);
@@ -575,9 +662,10 @@ export function Custom({ ctx, onOutput }: ToolProps) {
           <button
             key={p.label}
             type="button"
-            className={`palette-btn${p.extra?.dashed ? " dashed" : ""}`}
-            title={t.customPaletteTip}
-            draggable
+            className={`palette-btn${p.extra?.dashed ? " dashed" : ""}${p.draw && drawMode && drawMode.dashed === !!p.extra?.dashed ? " on" : ""}`}
+            title={p.draw ? t.customLineTip : t.customPaletteTip}
+            aria-pressed={p.draw ? !!drawMode && drawMode.dashed === !!p.extra?.dashed : undefined}
+            draggable={!p.draw}
             onDragStart={(e) => {
               e.dataTransfer.setData(DRAG_TYPE, String(i));
               e.dataTransfer.effectAllowed = "copy";
@@ -592,6 +680,11 @@ export function Custom({ ctx, onOutput }: ToolProps) {
 
       <div className={`custom-body${stacked ? " stacked" : ""}`} ref={body}>
         <div className="paper-col">
+          {drawMode && (
+            <p className="draw-hint small" role="status">
+              {draft ? t.customDrawEnd : t.customDrawStart}
+            </p>
+          )}
           <div className="paper-frame">
             <div className="ruler" style={{ height: length * k, ["--mm" as string]: `${k}px` }} aria-hidden>
               {Array.from({ length: Math.floor(length / 10) + 1 }, (_, i) => (
@@ -602,8 +695,9 @@ export function Custom({ ctx, onOutput }: ToolProps) {
             </div>
             <div
               ref={paper}
-              className={`paper${dropping ? " dropping" : ""}${layout.length ? " fixed" : ""}`}
+              className={`paper${dropping ? " dropping" : ""}${layout.length ? " fixed" : ""}${drawMode ? " drawing" : ""}`}
               style={{ width: layout.width * k, height: length * k }}
+              onPointerDownCapture={onPaperDownCapture}
               onPointerDown={(e) => {
                 const el = e.target as HTMLElement;
                 if (el === e.currentTarget || el.classList.contains("paper-items")) {
@@ -632,7 +726,29 @@ export function Custom({ ctx, onOutput }: ToolProps) {
                 </div>
               ))}
               </div>
-              {sel && editing !== sel.id && <Handles item={sel} k={k} onResize={startResize} onRotate={startRotate} />}
+              {sel && editing !== sel.id && !drawMode && <Handles item={sel} k={k} onResize={startResize} onRotate={startRotate} onEnd={startEnd} />}
+              {draft && (
+                <svg className="draft" width={layout.width * k} height={length * k} aria-hidden>
+                  <line
+                    x1={draft.from[0] * k}
+                    y1={draft.from[1] * k}
+                    x2={draft.to[0] * k}
+                    y2={draft.to[1] * k}
+                    strokeWidth={Math.max(1, 0.6 * k)}
+                    strokeDasharray={drawMode?.dashed ? `${Math.max(3, 1.8 * k)} ${Math.max(2, 1.2 * k)}` : undefined}
+                  />
+                  <circle cx={draft.from[0] * k} cy={draft.from[1] * k} r={4} />
+                </svg>
+              )}
+              <div
+                className="paper-grip"
+                title={t.customGripTip}
+                onPointerDown={startLength}
+                onDoubleClick={() => commit({ ...layout, length: null })}
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label={t.customLength}
+              />
               {guides.map((g) => (
                 <span key={g} className="guide" style={{ left: g * k }} />
               ))}
@@ -699,14 +815,31 @@ function TextEditor({ item, k, onChange, onDone }: { item: TextItem; k: number; 
   );
 }
 
-function Handles({ item, k, onResize, onRotate }: { item: Item; k: number; onResize: (e: ReactPointerEvent, it: Item, hx: number, hy: number) => void; onRotate: (e: ReactPointerEvent, it: Item) => void }) {
+function Handles({
+  item,
+  k,
+  onResize,
+  onRotate,
+  onEnd,
+}: {
+  item: Item;
+  k: number;
+  onResize: (e: ReactPointerEvent, it: Item, hx: number, hy: number) => void;
+  onRotate: (e: ReactPointerEvent, it: Item) => void;
+  onEnd: (e: ReactPointerEvent, it: Item, end: 0 | 1) => void;
+}) {
+  if (item.type === "line") {
+    // Lines are edited by their two ends, in any direction.
+    return (
+      <>
+        {lineEnds(item).map(([x, y], i) => (
+          <span key={i} className="handle end" title={t.customEndTip} style={{ left: x * k, top: y * k }} onPointerDown={(e) => onEnd(e, item, i as 0 | 1)} />
+        ))}
+      </>
+    );
+  }
   const sides: [number, number][] =
-    item.type === "line"
-      ? [
-          [-1, 0],
-          [1, 0],
-        ]
-      : item.type === "text"
+    item.type === "text"
         ? [
             [-1, 0],
             [1, 0],
@@ -817,17 +950,11 @@ function ItemProps({
       {item.type === "text" && (
         <>
           <textarea value={item.text} rows={3} onChange={(e) => onPatch({ text: e.target.value }, `text-${item.id}`)} aria-label={t.customTextField} />
+          <div className="num-field">
+            <span className="field-label">{t.font}</span>
+            <FontPicker value={item.font} onChange={(font) => onPatch({ font })} />
+          </div>
           <div className="geo">
-            <label className="num-field">
-              <span className="field-label">{t.font}</span>
-              <select value={item.font} onChange={(e) => onPatch({ font: e.target.value as FontId })}>
-                {FONTS.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </label>
             <Num label={t.size} unit="pt" value={item.size / PT} min={4} max={200} step={1} onChange={(v) => onPatch({ size: v * PT }, "size")} />
           </div>
           <div className="row icon-row">
@@ -894,12 +1021,16 @@ function ItemProps({
         </>
       )}
 
+      {item.type === "line" ? (
+        <LineGeo item={item} onPatch={onPatch} />
+      ) : (
       <div className="geo">
         <Num label="X" value={item.x} onChange={(x) => onPatch({ x }, "x")} />
         <Num label="Y" value={item.y} onChange={(y) => onPatch({ y }, "y")} />
         <Num label={t.customW} value={item.w} min={MIN} onChange={(w) => onPatch({ w }, "w")} />
-        {item.type !== "text" && item.type !== "line" && <Num label={t.customH} value={item.h} min={MIN} onChange={(h) => onPatch({ h }, "h")} />}
+        {item.type !== "text" && <Num label={t.customH} value={item.h} min={MIN} onChange={(h) => onPatch({ h }, "h")} />}
       </div>
+      )}
       <div className="row angle-row">
         <Num label={t.customAngle} unit="°" value={item.rotate} min={-180} max={180} step={1} onChange={(rotate) => onPatch({ rotate }, "rotate")} />
         <button type="button" className="icon-btn" onClick={() => turn(-90)} title={t.customTurnLeft} aria-label={t.customTurnLeft}>
@@ -925,6 +1056,23 @@ function ItemProps({
           <Trash2 size={14} /> {t.remove}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** A line's two ends, editable as coordinates. */
+function LineGeo({ item, onPatch }: { item: ShapeItem; onPatch: (p: Partial<Item>, key?: string) => void }) {
+  const [[x1, y1], [x2, y2]] = lineEnds(item);
+  const set = (a: number, b: number, c: number, d: number, key: string) => {
+    const { x, y, w, rotate } = lineBetween(item, a, b, c, d);
+    onPatch({ x, y, w, rotate }, key);
+  };
+  return (
+    <div className="geo">
+      <Num label={t.customStart("X")} value={x1} onChange={(v) => set(v, y1, x2, y2, "x1")} />
+      <Num label={t.customStart("Y")} value={y1} onChange={(v) => set(x1, v, x2, y2, "y1")} />
+      <Num label={t.customEnd("X")} value={x2} onChange={(v) => set(x1, y1, v, y2, "x2")} />
+      <Num label={t.customEnd("Y")} value={y2} onChange={(v) => set(x1, y1, x2, v, "y2")} />
     </div>
   );
 }

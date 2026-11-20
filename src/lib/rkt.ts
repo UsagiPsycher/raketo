@@ -4,7 +4,7 @@
 // Coordinates are millimetres from the top left corner of the printable
 // area; each item is a box (x, y, w, h) rotated by `rotate` degrees around
 // its centre. On a printer with another width the whole layout is scaled.
-import { fontCss, type Align, type FontId } from "./canvas";
+import { FONTS, type Align } from "./canvas";
 
 interface Box {
   id: number;
@@ -18,7 +18,8 @@ interface Box {
 export interface TextItem extends Box {
   type: "text";
   text: string;
-  font: FontId;
+  /** A built-in font id ("sans", "serif"…) or the family name of an installed font. */
+  font: string;
   /** Font size in mm. */
   size: number;
   bold: boolean;
@@ -95,6 +96,38 @@ export function makeItem(type: ItemType, cx: number, cy: number, width: number, 
   return { ...item, ...extra } as Item;
 }
 
+/** The two ends of a line, from its box and angle. */
+export function lineEnds(it: Box): [[number, number], [number, number]] {
+  const cx = it.x + it.w / 2;
+  const cy = it.y + it.h / 2;
+  const a = (it.rotate * Math.PI) / 180;
+  const dx = (Math.cos(a) * it.w) / 2;
+  const dy = (Math.sin(a) * it.w) / 2;
+  return [
+    [cx - dx, cy - dy],
+    [cx + dx, cy + dy],
+  ];
+}
+
+/** A line going from (x1, y1) to (x2, y2), keeping the thickness of `base`. */
+export function lineBetween<T extends Box>(base: T, x1: number, y1: number, x2: number, y2: number): T {
+  const w = Math.max(0.2, Math.hypot(x2 - x1, y2 - y1));
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2;
+  const rotate = Math.round(((Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI) * 10) / 10;
+  return { ...base, x: cx - w / 2, y: cy - base.h / 2, w, rotate };
+}
+
+/** Moves `p` so the segment from `from` is horizontal, vertical or at 45°. */
+export function straighten(from: [number, number], p: [number, number]): [number, number] {
+  const dx = p[0] - from[0];
+  const dy = p[1] - from[1];
+  const step = Math.PI / 4;
+  const a = Math.round(Math.atan2(dy, dx) / step) * step;
+  const len = dx * Math.cos(a) + dy * Math.sin(a);
+  return [from[0] + Math.cos(a) * len, from[1] + Math.sin(a) * len];
+}
+
 /** The four corners of an item after rotation. */
 export function corners(it: Box): [number, number][] {
   const cx = it.x + it.w / 2;
@@ -135,7 +168,14 @@ function blank(w: number, h: number) {
   return c;
 }
 
-export const textFont = (it: TextItem, px: number) => `${it.italic ? "italic " : ""}${it.bold ? 700 : 400} ${px}px ${fontCss(it.font)}`;
+/** CSS font-family for a text item's font; unknown families fall back to the default. */
+export function fontFamily(font: string): string {
+  const builtIn = FONTS.find((f) => f.id === font);
+  if (builtIn) return builtIn.css;
+  return `"${font.replace(/["\\]/g, "")}", ${FONTS[0].css}`;
+}
+
+export const textFont = (it: TextItem, px: number) => `${it.italic ? "italic " : ""}${it.bold ? 700 : 400} ${px}px ${fontFamily(it.font)}`;
 export const LINE = 1.22;
 export const PAD = 0.6; // mm of padding inside text boxes
 
@@ -306,7 +346,7 @@ export function parse(text: string): Layout {
         ...base,
         ...box,
         text: str(r.text),
-        font: oneOf(r.font, ["sans", "serif", "mono", "round"] as const, "sans"),
+        font: str(r.font, "sans").slice(0, 120) || "sans",
         size: Math.max(0.5, num(r.size, base.size)),
         bold: bool(r.bold),
         italic: bool(r.italic),

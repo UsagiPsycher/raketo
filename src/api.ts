@@ -185,6 +185,16 @@ export const api = {
     next: () => call<QueueState>("queue_continue", {}, "queue/continue"),
     stop: () => call<QueueState>("queue_stop", {}, "queue/stop"),
   },
+  /** Font families installed on this computer; the web page asks the browser, which needs a click. */
+  systemFonts: async (ask = false): Promise<string[]> => {
+    if (inTauri) return invoke<string[]>("system_fonts");
+    const query = (window as unknown as { queryLocalFonts?: () => Promise<{ family: string }[]> }).queryLocalFonts;
+    if (!ask || !query) return [];
+    const faces = await query();
+    return [...new Set(faces.map((f) => f.family))].sort((a, b) => a.localeCompare(b));
+  },
+  /** Whether the web page can list the fonts of this device. */
+  canAskFonts: !inTauri && "queryLocalFonts" in window,
   /** Saves a layout file: a save dialog in the app, a download on the web page. Returns the name it got. */
   saveLayout: async (name: string, contents: string): Promise<string | null> => {
     if (inTauri) return invoke<string | null>("save_layout", { name, contents });
