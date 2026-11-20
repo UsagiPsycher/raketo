@@ -229,6 +229,25 @@ async fn print_gray_wedge(svc: tauri::State<'_, Service>) -> Res<u64> {
     svc.print_gray_wedge().map_err(err)
 }
 
+/// Asks where to save a Custom layout and writes it; `None` when cancelled.
+#[tauri::command]
+async fn save_layout(app: tauri::AppHandle, name: String, contents: String) -> Res<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || {
+        let Some(path) = app.dialog().file().add_filter("Raketo", &["rkt"]).set_file_name(&name).blocking_save_file() else {
+            return Ok(None);
+        };
+        let mut path = path.into_path().map_err(err)?;
+        if path.extension().is_none() {
+            path.set_extension("rkt");
+        }
+        std::fs::write(&path, contents).map_err(err)?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
+    .map_err(err)?
+}
+
 #[tauri::command]
 fn queue_state(svc: tauri::State<'_, Service>) -> QueueState {
     svc.queue_state()
@@ -294,6 +313,7 @@ fn queue_stop(svc: tauri::State<'_, Service>) -> QueueState {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::Builder::new().arg(AUTOSTART_ARG).app_name("Raketo").build())
         .setup(|app| {
             let at_login = std::env::args().any(|a| a == AUTOSTART_ARG);
@@ -360,6 +380,7 @@ pub fn run() {
             retry_firewall,
             get_autostart,
             set_autostart,
+            save_layout,
             queue_state,
             queue_add,
             queue_remove,

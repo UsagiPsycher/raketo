@@ -185,6 +185,17 @@ export const api = {
     next: () => call<QueueState>("queue_continue", {}, "queue/continue"),
     stop: () => call<QueueState>("queue_stop", {}, "queue/stop"),
   },
+  /** Saves a layout file: a save dialog in the app, a download on the web page. Returns the name it got. */
+  saveLayout: async (name: string, contents: string): Promise<string | null> => {
+    if (inTauri) return invoke<string | null>("save_layout", { name, contents });
+    const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return name;
+  },
   shareInfo: () => (inTauri ? invoke<ShareInfo | null>("share_info") : Promise.resolve(null)),
   setShare: (enabled: boolean) => invoke<Settings>("set_share", { enabled }),
   retryFirewall: () => invoke<void>("retry_firewall"),

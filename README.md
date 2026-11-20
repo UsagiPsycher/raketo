@@ -3,7 +3,7 @@
 Raketo prints on the pocket thermal printers sold for the **iPrint** phone
 app, from a computer. It connects over Bluetooth and covers what the app's
 Print tab does: photos, text with images, documents, labels, sticky notes,
-to-do lists and long banners.
+to-do lists and long banners, plus a free layout editor.
 
 While a printer is connected, Raketo also shares it on the local network.
 Other devices can print from a web page, or add it as a regular printer
@@ -72,6 +72,41 @@ the queue for later. *One at a time* (the default) pauses after each sheet
 until you have torn it off; *Back to back* prints them all without pausing,
 with an optional dashed cut line between sheets. Jobs sent from other devices
 or scripts with `--queue` land in the same queue.
+
+**Custom layouts.** The Custom tool is a free layout editor on a strip of
+paper at the printer's width. Add text boxes, pictures, lines, dashed lines,
+circles and rectangles from the bar, with a click or by dragging them onto
+the paper, then move, resize and rotate them with the mouse. Each text box
+has its own font, size, style, alignment and angle, and can print white on
+black. The paper length either follows the content or is fixed. Changes can
+be undone with Ctrl+Z, and the current layout is kept between sessions.
+
+Layouts are saved as `.rkt` files: JSON with the paper width and length in
+millimetres, the items with their position, size, angle and settings, and
+the pictures embedded as data URLs. Markdown cannot hold free positions, so
+the format is our own, but it is plain text and easy to generate:
+
+```json
+{
+  "format": "raketo-layout",
+  "version": 1,
+  "width": 48,
+  "length": null,
+  "items": [
+    { "type": "text", "x": 4, "y": 2, "w": 40, "h": 6, "rotate": 0,
+      "text": "Hello", "font": "sans", "size": 5, "bold": true,
+      "italic": false, "underline": false, "align": "center", "invert": false },
+    { "type": "rect", "x": 2, "y": 10, "w": 44, "h": 20, "rotate": 0,
+      "stroke": 0.6, "dashed": true, "fill": false, "radius": 2 }
+  ],
+  "images": {}
+}
+```
+
+Other item types are `image` (with `image`, a key in `images`, and
+`brightness`, `contrast`, `invert`, `flip`), `line` and `ellipse`. Missing
+fields take their defaults; a layout opened on a printer of another width is
+scaled to fit.
 
 **Documents.** The Document tool opens PDF, EPUB, text and image files. PDF
 pages are scaled to the roll width; EPUB books are reflowed as text at the

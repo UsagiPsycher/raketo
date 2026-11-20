@@ -34,12 +34,15 @@ export function Photo({ ctx, onOutput }: ToolProps) {
   const [items, setItems] = useState<Item[]>([]);
   const [cam, setCam] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const root = useRef<HTMLDivElement>(null);
 
   const add = (imgs: Named[]) =>
     setItems((s) => [...s, ...imgs.map(({ img, name }) => ({ id: nextId++, img, name: name || `${t.webcam} ${new Date().toLocaleTimeString().slice(0, 5)}`, adjust: { ...noAdjust }, on: true }))]);
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      // Only while this tool is shown: others take pasted pictures too.
+      if (!root.current?.offsetParent) return;
       const files = [...(e.clipboardData?.files ?? [])];
       if (files.length) namedImages(files).then(add);
     };
@@ -59,6 +62,7 @@ export function Photo({ ctx, onOutput }: ToolProps) {
 
   return (
     <div
+      ref={root}
       className="tool"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
