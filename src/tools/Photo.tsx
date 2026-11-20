@@ -34,6 +34,9 @@ export function Photo({ ctx, onOutput }: ToolProps) {
   const [items, setItems] = useState<Item[]>([]);
   const [cam, setCam] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  // Touch devices take pictures with the system camera instead of a live view.
+  const touch = window.matchMedia("(pointer: coarse)").matches;
   const root = useRef<HTMLDivElement>(null);
 
   const add = (imgs: Named[]) =>
@@ -86,8 +89,19 @@ export function Photo({ ctx, onOutput }: ToolProps) {
         <button type="button" className="btn" onClick={() => input.current?.click()}>
           <ImagePlus size={16} /> {t.openImages}
         </button>
-        <button type="button" className="btn" onClick={() => setCam(true)}>
-          <Camera size={16} /> {t.webcam}
+        <input
+          ref={camera}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(e) => {
+            if (e.target.files) namedImages([...e.target.files]).then(add);
+            e.target.value = "";
+          }}
+        />
+        <button type="button" className="btn" onClick={() => (touch ? camera.current?.click() : setCam(true))}>
+          <Camera size={16} /> {touch ? t.takePhoto : t.webcam}
         </button>
         {items.length > 1 && (
           <>

@@ -3665,6 +3665,8 @@ version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "fontdb",
+ "jni 0.21.1",
+ "raketo-bt",
  "raketo-client",
  "raketo-core",
  "raketo-server",

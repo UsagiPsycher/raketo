@@ -80,3 +80,44 @@ jobs:
           cp target/release/raketo-cmd.exe portable/raketo.com
           pwsh -NoProfile -Command "Compress-Archive -Path portable/* -DestinationPath Raketo_${version}_x64_portable.zip"
           gh release upload "$GITHUB_REF_NAME" "Raketo_${version}_x64_portable.zip" --clobber
+
+  android:
+    # After the desktop builds, which create the draft release.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - run: npm ci
+
+      - name: Signed APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          RAKETO_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "No signing key in the repository secrets: skipping the APK."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/raketo-release.jks"
+          export RAKETO_KEYSTORE="$RUNNER_TEMP/raketo-release.jks"
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          npx tauri android build --apk --target aarch64 --target armv7
+          version="${GITHUB_REF_NAME#v}"
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk "Raketo_${version}_android.apk"
+          gh release upload "$GITHUB_REF_NAME" "Raketo_${version}_android.apk" --clobber
