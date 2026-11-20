@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Copy, ListPlus, QrCode, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, Bluetooth, Loader2, Printer, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Copy, ListOrdered, ListPlus, QrCode, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, Bluetooth, Loader2, Printer, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { api, type ShareInfo, type Content, type ModelSummary, type PrinterInfo, type QueueState, type Seen, type Settings, type State, type Status } from "./api";
 import { t } from "./i18n";
 import { qrCanvas } from "./lib/canvas";
@@ -224,6 +225,7 @@ export function PrinterPanel({
   queue,
   queueProgress,
   message,
+  part,
 }: {
   state: State;
   settings: Settings | null;
@@ -245,8 +247,11 @@ export function PrinterPanel({
   queue: QueueState;
   queueProgress: number | null;
   message: { kind: "ok" | "error"; text: string } | null;
+  /** On phones: the printer bar at the top, or the print tray at the bottom. */
+  part?: "top" | "tray";
 }) {
   const [connecting, setConnecting] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(false);
   const [calibrating, setCalibrating] = useState(false);
   const [mm, setMm] = useState(0);
   const [view, setView] = useState<"preview" | "queue">("preview");
@@ -265,6 +270,205 @@ export function PrinterPanel({
   const p = state.printer;
   const problem = problemOf(state.status);
   const printing = state.busy || progress !== null;
+  const blocked = problem !== null && problem !== "low_battery";
+  const left = sheetsLeft(queue);
+
+  const viewSwitch = (
+    <Segmented<"preview" | "queue">
+      label={t.panelView}
+      value={view}
+      onChange={setView}
+      options={[
+        { value: "preview", label: t.preview },
+        {
+          value: "queue",
+          label: (
+            <span className="row center">
+              {t.queue}
+              {queue.items.length > 0 && <span className={`count${queue.running ? " live" : ""}`}>{left}</span>}
+            </span>
+          ),
+        },
+      ]}
+    />
+  );
+
+  const paper =
+    view === "queue" ? (
+      <QueueList queue={queue} progress={queueProgress} />
+    ) : previews.length === 0 ? (
+      <div className="ticket empty-ticket">
+        <p>{t.emptyTicket}</p>
+      </div>
+    ) : (
+      <div className={`ticket${printing ? " feeding" : ""}`}>
+        {previews.map((src, i) => (
+          <img key={i} src={src} alt="" />
+        ))}
+      </div>
+    );
+
+  const options = (
+    <>
+      <Segmented<Content>
+        label={t.content}
+        value={job.content}
+        onChange={(content) => setJob({ ...job, content })}
+        options={(["text", "image", "photo"] as Content[]).map((c) => ({ value: c, label: t.contentKinds[c], tip: t.contentTips[c] }))}
+      />
+      <div className="row wrap">
+        {grayCapable && <Toggle label={t.gray} tip={t.grayTip} checked={job.gray} onChange={(gray) => setJob({ ...job, gray })} />}
+        <label className="copies" title={t.copies}>
+          {t.copies}
+          <input type="number" min={1} max={50} value={job.copies} onChange={(e) => setJob({ ...job, copies: Math.max(1, Math.min(50, Number(e.target.value) || 1)) })} className="num" />
+        </label>
+      </div>
+      <Range label={t.density} tip={t.densityTip} min={1} max={7} value={job.density} onChange={(density) => setJob({ ...job, density })} />
+    </>
+  );
+
+  const printButton = (withLength: boolean) => (
+    <button type="button" className="print-btn" onClick={onPrint} disabled={!canPrint || !p || printing || blocked}>
+      {printing ? (
+        <>
+          <Loader2 size={18} className="spin" /> {t.printing}
+          {progress !== null && <span className="pct">{Math.round(progress * 100)} %</span>}
+        </>
+      ) : (
+        <>
+          <Printer size={18} /> {t.print}
+          {withLength && mm > 0 && previews.length > 0 && <span className="pct">{t.length(mm)}</span>}
+        </>
+      )}
+      {progress !== null && <span className="bar" style={{ width: `${progress * 100}%` }} />}
+    </button>
+  );
+
+  const addButton = (
+    <button type="button" className="btn ghost" onClick={onQueue} disabled={!canPrint}>
+      <ListPlus size={16} /> {addCount > 1 ? t.addSheets(addCount) : t.addToQueue}
+    </button>
+  );
+
+  if (part === "top") {
+    // Phones: the printer as a bar across the top; tapping it opens the printer sheet.
+    return (
+      <header className="m-top">
+        <button type="button" className="m-device" onClick={() => setConnecting(true)} aria-haspopup="dialog">
+          <span className={`led${p ? " on" : state.connecting ? " wait" : ""}`} aria-hidden />
+          <span className="m-device-text">
+            <span className="device-title">{p ? p.name : state.connecting ? t.connecting : t.noPrinter}</span>
+            <span className="muted small">{p ? `${p.modelNo} · ${p.paperMm} mm` : api.canManage ? t.tapToConnect : t.previewFor(previewModel)}</span>
+          </span>
+        </button>
+        <Battery s={state.status} />
+        {problem && <span className="m-problem">{t.problems[problem]}</span>}
+        {connecting && createPortal(
+          <div className="sheet-backdrop" onClick={() => setConnecting(false)}>
+            <div className="sheet" role="dialog" aria-modal aria-label={t.printerSheet} onClick={(e) => e.stopPropagation()}>
+              <span className="sheet-grab" aria-hidden />
+              {p ? (
+                <>
+                  <div className="device-head">
+                    <span className="led on" aria-hidden />
+                    <div className="grow">
+                      <div className="device-title">{p.name}</div>
+                      <div className="muted small">
+                        {p.modelNo} · {p.paperMm} mm{p.firmware ? ` · ${t.firmware} ${p.firmware}` : ""}
+                      </div>
+                    </div>
+                    <Battery s={state.status} />
+                  </div>
+                  {api.canManage && <ShareRow settings={settings} onSettings={onSettings} />}
+                  <div className="row wrap">
+                    {api.canManage && p.gray && (
+                      <button type="button" className="btn" onClick={() => (setConnecting(false), setCalibrating(true))}>
+                        <SlidersHorizontal size={16} /> {t.calibrate}
+                      </button>
+                    )}
+                    {api.canManage && (
+                      <button type="button" className="btn" onClick={() => (api.disconnect(), setConnecting(false))}>
+                        {t.disconnect}
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : api.canManage ? (
+                <Connect settings={settings} onClose={() => setConnecting(false)} />
+              ) : (
+                <label className="field">
+                  <span className="field-label">{t.previewModel}</span>
+                  <select value={previewModel} onChange={(e) => setPreviewModel(e.target.value)}>
+                    {models.map((m) => (
+                      <option key={m.modelNo} value={m.modelNo}>
+                        {m.modelNo} ({m.paperMm} mm)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+        {calibrating && p && createPortal(<Calibrate printer={p} settings={settings} onSettings={onSettings} onClose={() => setCalibrating(false)} />, document.body)}
+      </header>
+    );
+  }
+
+  if (part === "tray") {
+    // Phones: a print tray along the bottom edge; the ticket sticks out of it and the tray slides up for details.
+    const toggle = () => setTrayOpen((o) => !o);
+    const status = message?.text ?? (problem ? t.problems[problem] : !p && api.canManage ? t.noPrinter : null);
+    return (
+      <>
+        {trayOpen && <div className="tray-backdrop" onClick={() => setTrayOpen(false)} aria-hidden />}
+        <aside className={`tray${trayOpen ? " open" : ""}`} aria-label={t.printTray}>
+          <button type="button" className="tray-grab" onClick={toggle} aria-expanded={trayOpen} aria-label={trayOpen ? t.close : t.showDetails}>
+            <span />
+          </button>
+          {trayOpen && (
+            <div className="tray-body">
+              {viewSwitch}
+              <div className="ticket-scroll">{paper}</div>
+              <div className="job">
+                {view === "queue" ? (
+                  <QueueControls queue={queue} canPrint={!!p && !blocked} progress={queueProgress} />
+                ) : (
+                  <>
+                    {options}
+                    {addButton}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {!(trayOpen && view === "queue") && (
+            <div className="tray-bar">
+              <button type="button" className={`tray-ticket${previews.length ? "" : " empty"}${printing ? " feeding" : ""}`} onClick={toggle} aria-label={t.showDetails}>
+                {previews[0] && <img src={previews[0]} alt="" />}
+              </button>
+              <button type="button" className="tray-info" onClick={toggle}>
+                <strong>{mm > 0 && previews.length ? `${mm} mm` : t.nothingYet}</strong>
+                {status && <span className={`small ${message?.kind === "error" || (problem && !message) ? "error" : message ? "ok" : "muted"}`}>{status}</span>}
+              </button>
+              <button
+                type="button"
+                className="icon-btn tray-queue"
+                onClick={() => (setView("queue"), setTrayOpen(true))}
+                aria-label={t.queue}
+                title={t.queue}
+              >
+                <ListOrdered size={20} />
+                {queue.items.length > 0 && <span className={`count${queue.running ? " live" : ""}`}>{left}</span>}
+              </button>
+              {printButton(false)}
+            </div>
+          )}
+        </aside>
+      </>
+    );
+  }
 
   return (
     <aside className="printer">
@@ -316,81 +520,21 @@ export function PrinterPanel({
         </div>
         {problem && <div className="problem">{t.problems[problem]}</div>}
         {p && api.canManage && <ShareRow settings={settings} onSettings={onSettings} />}
-        <div className="views">
-          <Segmented<"preview" | "queue">
-            label={t.panelView}
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "preview", label: t.preview },
-              {
-                value: "queue",
-                label: (
-                  <span className="row center">
-                    {t.queue}
-                    {queue.items.length > 0 && <span className={`count${queue.running ? " live" : ""}`}>{sheetsLeft(queue)}</span>}
-                  </span>
-                ),
-              },
-            ]}
-          />
-        </div>
+        <div className="views">{viewSwitch}</div>
         <div className="slot" aria-hidden />
         {connecting && <Connect settings={settings} onClose={() => setConnecting(false)} />}
       </div>
 
-      <div className="ticket-scroll">
-        {view === "queue" ? (
-          <QueueList queue={queue} progress={queueProgress} />
-        ) : previews.length === 0 ? (
-          <div className="ticket empty-ticket">
-            <p>{t.emptyTicket}</p>
-          </div>
-        ) : (
-          <div className={`ticket${printing ? " feeding" : ""}`}>
-            {previews.map((src, i) => (
-              <img key={i} src={src} alt="" />
-            ))}
-          </div>
-        )}
-      </div>
+      <div className="ticket-scroll">{paper}</div>
 
       <div className="job">
         {view === "queue" ? (
-          <QueueControls queue={queue} canPrint={!!p && (problem === null || problem === "low_battery")} progress={queueProgress} />
+          <QueueControls queue={queue} canPrint={!!p && !blocked} progress={queueProgress} />
         ) : (
           <>
-        <Segmented<Content>
-          label={t.content}
-          value={job.content}
-          onChange={(content) => setJob({ ...job, content })}
-          options={(["text", "image", "photo"] as Content[]).map((c) => ({ value: c, label: t.contentKinds[c], tip: t.contentTips[c] }))}
-        />
-        <div className="row wrap">
-          {grayCapable && <Toggle label={t.gray} tip={t.grayTip} checked={job.gray} onChange={(gray) => setJob({ ...job, gray })} />}
-          <label className="copies" title={t.copies}>
-            {t.copies}
-            <input type="number" min={1} max={50} value={job.copies} onChange={(e) => setJob({ ...job, copies: Math.max(1, Math.min(50, Number(e.target.value) || 1)) })} className="num" />
-          </label>
-        </div>
-        <Range label={t.density} tip={t.densityTip} min={1} max={7} value={job.density} onChange={(density) => setJob({ ...job, density })} />
-        <button type="button" className="print-btn" onClick={onPrint} disabled={!canPrint || !p || printing || (problem !== null && problem !== "low_battery")}>
-          {printing ? (
-            <>
-              <Loader2 size={18} className="spin" /> {t.printing}
-              {progress !== null && <span className="pct">{Math.round(progress * 100)} %</span>}
-            </>
-          ) : (
-            <>
-              <Printer size={18} /> {t.print}
-              {mm > 0 && previews.length > 0 && <span className="pct">{t.length(mm)}</span>}
-            </>
-          )}
-          {progress !== null && <span className="bar" style={{ width: `${progress * 100}%` }} />}
-        </button>
-        <button type="button" className="btn ghost" onClick={onQueue} disabled={!canPrint}>
-          <ListPlus size={16} /> {addCount > 1 ? t.addSheets(addCount) : t.addToQueue}
-        </button>
+        {options}
+        {printButton(true)}
+        {addButton}
         {state.queue > 0 && <p className="muted small">{t.queued(state.queue)}</p>}
         {message && <p className={message.kind === "error" ? "error" : "ok"}>{message.text}</p>}
           </>

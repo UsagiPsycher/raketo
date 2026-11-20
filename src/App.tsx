@@ -29,7 +29,21 @@ const TOOLS: { id: ToolId; icon: typeof ImageIcon; Comp: ComponentType<ToolProps
 const emptyState: State = { connecting: false, printer: null, status: null, busy: false, queue: 0 };
 const emptyQueue: QueueState = { items: [], mode: { pause: true, separators: true }, running: false, waiting: false, current: null, job: null, error: null, printed: 0 };
 
+/** Phones and narrow windows get the touch layout. */
+function useMobile() {
+  const query = "(max-width: 760px), (pointer: coarse) and (max-width: 1000px)";
+  const [mobile, setMobile] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setMobile(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return mobile;
+}
+
 export default function App() {
+  const mobile = useMobile();
   const [state, setState] = useState<State>(emptyState);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelSummary[]>([]);
@@ -142,8 +156,34 @@ export default function App() {
     }
   };
 
+  const panel = {
+    state,
+    settings,
+    onSettings: setSettings,
+    models,
+    previewModel,
+    setPreviewModel,
+    previews,
+    dpi: ctx.dpi,
+    job: fullJob,
+    setJob: (j: JobUi) => {
+      setContentFor((s) => ({ ...s, [tool]: j.content }));
+      setJobBase({ gray: j.gray, density: j.density, copies: j.copies });
+    },
+    grayCapable,
+    canPrint: pngs.length > 0,
+    progress,
+    onPrint: print,
+    onQueue: addToQueue,
+    addCount: (out?.sheets?.length || 1) * job.copies,
+    queue,
+    queueProgress,
+    message,
+  };
+
   return (
-    <div className="app">
+    <div className={`app${mobile ? " mobile" : ""}`}>
+      {mobile && <PrinterPanel {...panel} part="top" />}
       <nav className="rail" aria-label="Outils">
         <div className="brand" aria-hidden>
           <img src="./icon.png" alt="" />
@@ -155,7 +195,7 @@ export default function App() {
           </button>
         ))}
         <span className="rail-spacer" />
-        {api.canManage && <SettingsMenu />}
+        {api.canManage && !api.android && <SettingsMenu />}
       </nav>
       <main className="editor">
         <h1>{t.tools[tool]}</h1>
@@ -165,30 +205,7 @@ export default function App() {
           </section>
         ))}
       </main>
-      <PrinterPanel
-        state={state}
-        settings={settings}
-        onSettings={setSettings}
-        models={models}
-        previewModel={previewModel}
-        setPreviewModel={setPreviewModel}
-        previews={previews}
-        dpi={ctx.dpi}
-        job={fullJob}
-        setJob={(j) => {
-          setContentFor((s) => ({ ...s, [tool]: j.content }));
-          setJobBase({ gray: j.gray, density: j.density, copies: j.copies });
-        }}
-        grayCapable={grayCapable}
-        canPrint={pngs.length > 0}
-        progress={progress}
-        onPrint={print}
-        onQueue={addToQueue}
-        addCount={(out?.sheets?.length || 1) * job.copies}
-        queue={queue}
-        queueProgress={queueProgress}
-        message={message}
-      />
+      <PrinterPanel {...panel} part={mobile ? "tray" : undefined} />
     </div>
   );
 }

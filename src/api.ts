@@ -159,6 +159,8 @@ function call<T>(cmd: string, args: Record<string, unknown> = {}, httpPath?: str
 export const api = {
   /** The web page can only print; the printer is managed on the host computer. */
   canManage: inTauri,
+  /** The Android app, as opposed to the desktop app or a web page. */
+  android: inTauri && /Android/i.test(navigator.userAgent),
   models: () => call<ModelSummary[]>("models", {}, "models", true),
   scan: (seconds = 6) => call<Seen[]>("scan", { seconds }),
   connect: (address: string, name?: string) => call<State>("connect", { address, name }),

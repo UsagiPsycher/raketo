@@ -8,6 +8,8 @@ use tokio::sync::Mutex;
 
 #[cfg(windows)]
 mod firewall;
+#[cfg(target_os = "android")]
+mod android;
 
 /// The running server with its mode (`true` = shared on the LAN), and the
 /// firewall check done this session.
@@ -104,18 +106,33 @@ async fn retry_firewall(app: tauri::AppHandle) -> Res<()> {
 /// Argument passed when the system starts Raketo at login.
 const AUTOSTART_ARG: &str = "--autostart";
 
+#[cfg(desktop)]
 #[tauri::command]
 fn get_autostart(app: tauri::AppHandle) -> Res<bool> {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().map_err(err)
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Res<bool> {
     use tauri_plugin_autostart::ManagerExt;
     let l = app.autolaunch();
     if enabled { l.enable() } else { l.disable() }.map_err(err)?;
     l.is_enabled().map_err(err)
+}
+
+// Phones have no "start with the session".
+#[cfg(mobile)]
+#[tauri::command]
+fn get_autostart() -> Res<bool> {
+    Ok(false)
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn set_autostart(_enabled: bool) -> Res<bool> {
+    Ok(false)
 }
 
 type Res<T> = Result<T, String>;
@@ -234,6 +251,9 @@ async fn print_gray_wedge(svc: tauri::State<'_, Service>) -> Res<u64> {
 async fn system_fonts() -> Res<Vec<String>> {
     tokio::task::spawn_blocking(|| {
         let mut db = fontdb::Database::new();
+        #[cfg(target_os = "android")]
+        db.load_fonts_dir("/system/fonts");
+        #[cfg(not(target_os = "android"))]
         db.load_system_fonts();
         let mut names: Vec<String> = db
             .faces()
@@ -255,8 +275,14 @@ async fn system_fonts() -> Res<Vec<String>> {
 /// Asks where to save a Custom layout and writes it; `None` when cancelled.
 #[tauri::command]
 async fn save_layout(app: tauri::AppHandle, name: String, contents: String) -> Res<Option<String>> {
-    use tauri_plugin_dialog::DialogExt;
+    #[cfg(target_os = "android")]
+    {
+        let _ = app;
+        return tokio::task::spawn_blocking(move || android::save_document(&name, &contents)).await.map_err(err)?;
+    }
+    #[cfg(not(target_os = "android"))]
     tokio::task::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
         let Some(path) = app.dialog().file().add_filter("Raketo", &["rkt"]).set_file_name(&name).blocking_save_file() else {
             return Ok(None);
         };
@@ -334,12 +360,17 @@ fn queue_stop(svc: tauri::State<'_, Service>) -> QueueState {
     svc.queue_state()
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_autostart::Builder::new().arg(AUTOSTART_ARG).app_name("Raketo").build())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_autostart::Builder::new().arg(AUTOSTART_ARG).app_name("Raketo").build());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::plugin());
+    builder
         .setup(|app| {
             let at_login = std::env::args().any(|a| a == AUTOSTART_ARG);
+            #[cfg(desktop)]
             if at_login {
                 // Started with the session: stay out of the way.
                 if let Some(w) = app.get_webview_window("main") {

@@ -1,0 +1,7 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.raketo" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Behind the status and navigation bars: the colour of the printer bar. -->
+        <item name="android:windowBackground">@color/shell</item>
+    </style>
+</resources>

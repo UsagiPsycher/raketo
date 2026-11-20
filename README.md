@@ -20,6 +20,7 @@ Get the latest build from [Releases](https://github.com/UsagiPsycher/raketo/rele
 | Windows 10/11 | `Raketo_x.y.z_x64-setup.exe` (installer), or `Raketo_x.y.z_x64_portable.zip` (no install) |
 | macOS 11+ | `Raketo_x.y.z_aarch64.dmg` (Apple Silicon), `Raketo_x.y.z_x64.dmg` (Intel) |
 | Linux | `.AppImage` (any distribution), `.deb` (Debian, Ubuntu), `.rpm` (Fedora, openSUSE) |
+| Android 8+ | `Raketo_x.y.z_android.apk` |
 
 The builds are not code-signed yet:
 
@@ -28,6 +29,22 @@ The builds are not code-signed yet:
   `xattr -cr /Applications/Raketo.app`.
 - **Linux**: make the AppImage executable (`chmod +x Raketo*.AppImage`). Raketo
   uses BlueZ, which every desktop distribution ships.
+- **Android**: open the APK and allow installing from that source when asked.
+  Raketo asks for the Bluetooth permission the first time it searches for
+  printers.
+
+## Android
+
+The Android app has the same tools, preview, queue, custom layouts and
+sharing as the desktop app, in a layout made for phones: the printer sits
+in a bar at the top, the tools are a row of chips, and printing happens from
+a tray along the bottom edge that slides up for the preview, the settings
+and the queue. "Take a photo" uses the phone's camera. The `raketo` command
+and starting with the session are desktop only.
+
+Bluetooth goes through a small Kotlin plugin in
+`src-tauri/gen/android` (BLE GATT and classic SPP); the printing code is the
+same Rust as on the desktop.
 
 ## Printers
 
@@ -238,6 +255,12 @@ sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libdbus
 On Windows, `build.bat` builds the installer, the portable zip and the
 `raketo` command.
 
+For Android, install Android Studio (SDK, NDK and its bundled JDK), the Rust
+targets (`rustup target add aarch64-linux-android armv7-linux-androideabi
+x86_64-linux-android i686-linux-android`), set `ANDROID_HOME`, `NDK_HOME` and
+`JAVA_HOME`, then run `npx tauri android build --apk`, or
+`npx tauri android dev` with a phone plugged in.
+
 For development, `npx tauri dev` runs the app with hot reload. On Windows,
 build the command once first (`build.bat` does it), since the app bundles it.
 `cargo run -p raketo-cli -- scan` drives a printer directly, without the app,
@@ -247,13 +270,14 @@ for protocol tests.
 
 ```
 crates/core      model catalogue, frames, raster encoders, printer replies
-crates/bt        Bluetooth LE (btleplug) and RFCOMM (Windows, Linux, macOS), pairing
+crates/bt        Bluetooth LE (btleplug) and RFCOMM (Windows, Linux, macOS), pairing;
+                 on Android, a bridge to the app's Kotlin plugin
 crates/service   connection, print queue, per-printer settings
 crates/server    web page, JSON API, IPP Everywhere endpoint, mDNS, PDF and EPUB rendering
 crates/client    the `raketo` command (talks to the running app)
 crates/cmd       console build of that command (raketo.com on Windows)
 crates/cli       low-level test tool that drives a printer directly
-src-tauri        desktop app
+src-tauri        desktop and Android app (src-tauri/gen/android: Android project)
 src              interface (React), shared by the app and the web page
 docs/protocol.md the printer protocol
 ```

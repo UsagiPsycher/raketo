@@ -2,8 +2,12 @@
 //!
 //! Every printer advertises over BLE, which is how it is discovered. Data then
 //! goes either over BLE GATT or, for models flagged `useSPP`, over classic
-//! Bluetooth RFCOMM at the same address.
+//! Bluetooth RFCOMM at the same address. On Android both go through the
+//! app's Kotlin plugin (see [`android`]).
 
+#[cfg(target_os = "android")]
+pub mod android;
+#[cfg(not(target_os = "android"))]
 mod ble;
 mod printer;
 
@@ -39,6 +43,7 @@ pub enum Error {
     Timeout,
     #[error("classic Bluetooth is not supported on this platform yet")]
     Unsupported,
+    #[cfg(not(target_os = "android"))]
     #[error(transparent)]
     Ble(#[from] btleplug::Error),
 }
@@ -76,6 +81,9 @@ pub fn parse_address(s: &str) -> Option<u64> {
 
 /// Scans for known printers for `timeout`.
 pub async fn scan(timeout: Duration) -> Result<Vec<Found>> {
+    #[cfg(target_os = "android")]
+    return android::scan(timeout).await;
+    #[cfg(not(target_os = "android"))]
     ble::scan(timeout).await
 }
 

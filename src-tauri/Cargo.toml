@@ -21,9 +21,15 @@ raketo-core = { path = "../crates/core" }
 raketo-service = { path = "../crates/service" }
 raketo-server = { path = "../crates/server" }
 raketo-client = { path = "../crates/client" }
-tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 fontdb = "0.23"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-autostart = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+raketo-bt = { path = "../crates/bt" }
+jni = "0.21"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Console"] }

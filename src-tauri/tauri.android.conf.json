@@ -1,0 +1,8 @@
+{
+  "identifier": "app.raketo",
+  "bundle": {
+    "android": {
+      "minSdkVersion": 26
+    }
+  }
+}

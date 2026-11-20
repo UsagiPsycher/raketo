@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "android"))]
 use crate::ble::BleLink;
 use crate::{Error, Found, Result};
 use raketo_core::frame::{self, cmd};
@@ -9,7 +10,10 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Notify};
 
 enum Link {
+    #[cfg(not(target_os = "android"))]
     Ble(BleLink),
+    #[cfg(target_os = "android")]
+    Android(crate::android::Conn),
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     Spp(Arc<crate::classic::Rfcomm>),
 }
@@ -52,6 +56,9 @@ impl Printer {
     pub async fn connect(found: &Found) -> Result<Printer> {
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let alive = Arc::new(AtomicBool::new(true));
+        #[cfg(target_os = "android")]
+        let link = Link::Android(crate::android::Conn::open(found, tx, alive.clone()).await?);
+        #[cfg(not(target_os = "android"))]
         let link = if found.model.use_spp {
             Self::open_spp(found, tx, alive.clone()).await?
         } else {
@@ -119,7 +126,7 @@ impl Printer {
         Ok(Link::Spp(sock))
     }
 
-    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos", target_os = "android")))]
     async fn open_spp(_: &Found, _: mpsc::UnboundedSender<Vec<u8>>, _: Arc<AtomicBool>) -> Result<Link> {
         Err(Error::Unsupported)
     }
@@ -142,6 +149,9 @@ impl Printer {
 
     fn chunk_size(&self) -> usize {
         match &self.link {
+            #[cfg(target_os = "android")]
+            Link::Android(c) => c.chunk_size(),
+            #[cfg(not(target_os = "android"))]
             Link::Ble(b) => b.chunk_size(),
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             Link::Spp(_) => self.model().img_mtu.max(20) as usize,
@@ -150,6 +160,9 @@ impl Printer {
 
     async fn raw_write(&self, data: &[u8]) -> Result<()> {
         match &self.link {
+            #[cfg(target_os = "android")]
+            Link::Android(c) => c.write(data).await,
+            #[cfg(not(target_os = "android"))]
             Link::Ble(b) => b.write(data).await,
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             Link::Spp(s) => {
@@ -230,6 +243,11 @@ impl Printer {
     pub async fn send(&self, job: &[u8], progress: impl Fn(usize, usize)) -> Result<()> {
         let m = self.model();
         let interval = match &self.link {
+            #[cfg(target_os = "android")]
+            Link::Android(c) if c.spp => m.interval.clamp(2, 10),
+            #[cfg(target_os = "android")]
+            Link::Android(_) => m.interval,
+            #[cfg(not(target_os = "android"))]
             Link::Ble(_) => m.interval,
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             Link::Spp(_) => m.interval.clamp(2, 10),
@@ -265,6 +283,9 @@ impl Printer {
     pub async fn disconnect(&self) {
         self.alive.store(false, Ordering::Relaxed);
         match &self.link {
+            #[cfg(target_os = "android")]
+            Link::Android(c) => c.close().await,
+            #[cfg(not(target_os = "android"))]
             Link::Ble(b) => b.close().await,
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             Link::Spp(s) => s.close(),
