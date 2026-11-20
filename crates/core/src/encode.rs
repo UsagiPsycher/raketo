@@ -40,6 +40,9 @@ pub struct JobOptions {
     pub gray_curve: Option<GrayCurve>,
     /// Label height, bounds the gap search on label paper.
     pub label_height_mm: Option<u32>,
+    /// Feeds the paper out to the tear bar at the end. Off between sheets
+    /// printed back to back, so they follow each other without a gap.
+    pub feed_after: bool,
 }
 
 /// Maps requested darkness 0..=15 into the range a printer actually renders.
@@ -78,6 +81,7 @@ impl Default for JobOptions {
             extra_feed: 0,
             gray_curve: None,
             label_height_mm: None,
+            feed_after: true,
         }
     }
 }
@@ -268,7 +272,7 @@ fn job_standard(model: &Model, pages: &[Bitmap], opts: &JobOptions) -> Vec<u8> {
     let fl = feed_lines(model);
     if model.auto_label_check || !label {
         out.extend(frame::speed(25));
-        if !label {
+        if !label && opts.feed_after {
             for _ in 0..model.paper_num.max(2) {
                 out.extend(frame::feed(fl));
             }
@@ -402,7 +406,7 @@ fn job_gray(model: &Model, pages: &[GrayBitmap], opts: &JobOptions) -> Vec<u8> {
         }
     }
     out.extend(frame::speed(15));
-    if !opts.label {
+    if !opts.label && opts.feed_after {
         for _ in 0..model.paper_num.max(2) {
             out.extend(frame::feed(feed_lines(model)));
         }
@@ -479,7 +483,9 @@ fn job_escpos(model: &Model, pages: &[Bitmap], opts: &JobOptions) -> Vec<u8> {
             }
         }
     }
-    out.extend([0x1B, 0x64, if model.devdpi == 300 { 4 } else { 3 }]);
+    if opts.feed_after {
+        out.extend([0x1B, 0x64, if model.devdpi == 300 { 4 } else { 3 }]);
+    }
     out.extend(frame::frame_prefixed(cmd::STATUS, &[0]));
     out
 }
@@ -514,6 +520,27 @@ pub fn rasterize(model: &Model, pages: &[image::DynamicImage], opts: &JobOptions
             }
         })
         .collect()
+}
+
+/// Dashed cut line printed between sheets that follow each other without a pause.
+pub fn separator(model: &Model) -> Raster {
+    let w = model.image_width();
+    let mm = model.devdpi.max(200) * 10 / 254; // dots per mm
+    let (margin, thick, dash, gap) = (mm * 3, (mm / 3).max(2), mm * 3, mm * 2);
+    let mut b = raster::Bitmap::blank(w, margin * 2 + thick);
+    for y in margin..margin + thick {
+        for x in 0..w {
+            if x % (dash + gap) < dash {
+                b.dots[(y * w + x) as usize] = 1;
+            }
+        }
+    }
+    Raster::Mono(b)
+}
+
+/// One blank row, to build a job that only feeds the paper out.
+pub fn blank(model: &Model) -> Raster {
+    Raster::Mono(raster::Bitmap::blank(model.image_width(), 1))
 }
 
 /// Builds the complete byte stream for a job.
@@ -599,6 +626,19 @@ mod tests {
                 let job = build_job(m, &r, &o);
                 assert!(job.len() > 50, "{}", m.model_no);
             }
+        }
+    }
+
+    #[test]
+    fn back_to_back_sheets_skip_the_feed() {
+        let m = crate::lookup("SC03h").unwrap();
+        let r = vec![separator(m)];
+        let fed = build_job(m, &r, &JobOptions::default());
+        let tight = build_job(m, &r, &JobOptions { feed_after: false, ..Default::default() });
+        assert!(tight.len() < fed.len());
+        if let Raster::Mono(b) = &r[0] {
+            assert_eq!(b.width, m.image_width());
+            assert!(b.dots.contains(&1) && b.dots.contains(&0));
         }
     }
 }

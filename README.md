@@ -63,6 +63,23 @@ without touching anything. It uses the usual mechanism of each system: the
 Run key on Windows, a login item (LaunchAgent) on macOS, and an XDG autostart
 entry on Linux.
 
+**Queue.** *Add to queue* keeps the current print for later, so you can plan
+several sheets, from different tools, and print them in one go from the
+*Queue* tab. Each copy counts as a sheet. Several photos opened at once each
+become their own sheet; uncheck the ones you do not want. In the queue, drag
+sheets to reorder them and uncheck the ones to skip: unchecked sheets stay in
+the queue for later. *One at a time* (the default) pauses after each sheet
+until you have torn it off; *Back to back* prints them all without pausing,
+with an optional dashed cut line between sheets. Jobs sent from other devices
+or scripts with `--queue` land in the same queue.
+
+**Documents.** The Document tool opens PDF, EPUB, text and image files. PDF
+pages are scaled to the roll width; EPUB books are reflowed as text at the
+size and font you choose, one chapter or a range of chapters at a time.
+
+**To-do list.** The list prints across the roll (portrait) or along it
+(landscape), where tasks flow in columns.
+
 **Label paper.** In the Label tool, turn on *Label paper*. Before each copy,
 Raketo finds the edge of the next label with the printer's paper sensor, so
 each print lands on its own label.
@@ -101,13 +118,18 @@ is on.
 ```sh
 raketo print photo.jpg --gray
 raketo print receipt.png --mode text --copies 2
+raketo print report.pdf --pages 1-2
+raketo print book.epub --pages 3 --size 22
+raketo text "Shopping list" --queue --title Groceries
 raketo text "Order 42: two coffees" --size 40 --bold --center
 some-command | raketo text -
 raketo status
 ```
 
 Options: `--mode text|image|photo`, `--gray`, `--density 1-7`, `--copies n`,
-`--label`, `--label-height mm`, `--trim`, `--no-wait`; for text, `--size px`,
+`--label`, `--label-height mm`, `--trim`, `--pages 1-3,5` (PDF pages or EPUB
+chapters), `--queue` and `--title name` (add to the queue instead of printing
+now), `--no-wait`; for text and EPUB, `--size px`,
 `--bold`, `--center`, `--right`. `--url` (or `RAKETO_URL`) targets Raketo on
 another computer, `--json` prints the raw reply. Run `raketo help` for the
 full list.
@@ -137,10 +159,11 @@ curl http://127.0.0.1:8631/status
 ```
 
 - `POST /print`: the body is an image (PNG, JPEG, GIF, WebP, BMP, PWG raster
-  or URF).
+  or URF), a PDF or an EPUB.
 - `POST /print/text`: the body is UTF-8 text, laid out by Raketo.
 - Query parameters: `mode`, `gray`, `density`, `copies`, `label`,
-  `label_height`, `trim`, `wait=0`; for text, `size`, `bold`, `align`.
+  `label_height`, `trim`, `pages`, `queue=1`, `title`, `wait=0`; for text,
+  `size`, `bold`, `align` (`size` also sets the EPUB text size).
 
 Replies are JSON: `{"ok":true,"job":3}` once the print is done (or queued with
 `wait=0`), otherwise `{"ok":false,"error":"no_paper","message":"…"}` with an
@@ -153,8 +176,7 @@ current one to `api.json` in its configuration folder
 (`%APPDATA%\app.raketo.desktop` on Windows,
 `~/Library/Application Support/app.raketo.desktop` on macOS,
 `~/.config/app.raketo.desktop` on Linux). The `raketo` command reads that
-file. PDF files are not rendered by the API yet; print them to the Raketo
-printer instead.
+file.
 
 ## Building
 
@@ -186,7 +208,7 @@ for protocol tests.
 crates/core      model catalogue, frames, raster encoders, printer replies
 crates/bt        Bluetooth LE (btleplug) and RFCOMM (Windows, Linux, macOS), pairing
 crates/service   connection, print queue, per-printer settings
-crates/server    web page, JSON API, IPP Everywhere endpoint, mDNS
+crates/server    web page, JSON API, IPP Everywhere endpoint, mDNS, PDF and EPUB rendering
 crates/client    the `raketo` command (talks to the running app)
 crates/cmd       console build of that command (raketo.com on Windows)
 crates/cli       low-level test tool that drives a printer directly

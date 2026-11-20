@@ -5,6 +5,7 @@
 //! add the printer without a driver. Both are advertised over mDNS.
 
 #[allow(dead_code)]
+mod docs;
 mod ipp;
 mod raster;
 pub mod text;
@@ -20,7 +21,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use futures::Stream;
 use ipp::{op, status, tag, Group, Message, Value};
 use raketo_core::{Content, JobOptions};
-use raketo_service::{PrintRequest, Service, ServiceEvent};
+use raketo_service::{PrintRequest, QueueMode, Service, ServiceEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -118,6 +119,16 @@ pub async fn start(svc: Service, port: u16, name: String, lan: bool) -> std::io:
         .route("/api/preview", post(api_preview))
         .route("/api/print", post(api_print))
         .route("/api/events", get(api_events))
+        .route("/api/queue", get(api_queue))
+        .route("/api/queue/add", post(api_queue_add))
+        .route("/api/queue/remove", post(api_queue_remove))
+        .route("/api/queue/move", post(api_queue_move))
+        .route("/api/queue/select", post(api_queue_select))
+        .route("/api/queue/clear", post(api_queue_clear))
+        .route("/api/queue/mode", post(api_queue_mode))
+        .route("/api/queue/start", post(api_queue_start))
+        .route("/api/queue/continue", post(api_queue_continue))
+        .route("/api/queue/stop", post(api_queue_stop))
         .route("/print", post(simple_print))
         .route("/print/text", post(simple_print_text))
         .route("/status", get(simple_status))
@@ -381,6 +392,96 @@ async fn api_print(
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QueueAddBody {
+    pages: Vec<String>,
+    #[serde(default)]
+    options: JobOptions,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct QueueIdBody {
+    id: u64,
+    #[serde(default)]
+    index: usize,
+}
+
+#[derive(Deserialize)]
+struct QueueSelectBody {
+    /// Every sheet when absent.
+    id: Option<u64>,
+    selected: bool,
+}
+
+#[derive(Deserialize)]
+struct QueueModeBody {
+    mode: QueueMode,
+}
+
+async fn api_queue(AxState(app): AxState<App>) -> impl IntoResponse {
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_add(
+    AxState(app): AxState<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    Json(b): Json<QueueAddBody>,
+) -> Result<Json<u64>, (StatusCode, String)> {
+    let pages = decode_pages(&b.pages)?;
+    let svc = app.svc.clone();
+    let req = PrintRequest { pages, options: b.options, source: peer.ip().to_string() };
+    tokio::task::spawn_blocking(move || svc.queue_add(req, &b.title, &b.kind))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+}
+
+async fn api_queue_remove(AxState(app): AxState<App>, Json(b): Json<QueueIdBody>) -> impl IntoResponse {
+    app.svc.queue_remove(b.id);
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_move(AxState(app): AxState<App>, Json(b): Json<QueueIdBody>) -> impl IntoResponse {
+    app.svc.queue_move(b.id, b.index);
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_select(AxState(app): AxState<App>, Json(b): Json<QueueSelectBody>) -> impl IntoResponse {
+    app.svc.queue_select(b.id, b.selected);
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_clear(AxState(app): AxState<App>) -> impl IntoResponse {
+    app.svc.queue_clear();
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_mode(AxState(app): AxState<App>, Json(b): Json<QueueModeBody>) -> impl IntoResponse {
+    app.svc.set_queue_mode(b.mode);
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_start(AxState(app): AxState<App>) -> Result<Json<raketo_service::QueueState>, (StatusCode, String)> {
+    app.svc.queue_start().map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
+    Ok(Json(app.svc.queue_state()))
+}
+
+async fn api_queue_continue(AxState(app): AxState<App>) -> impl IntoResponse {
+    app.svc.queue_continue();
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_stop(AxState(app): AxState<App>) -> impl IntoResponse {
+    app.svc.queue_stop();
+    Json(app.svc.queue_state())
+}
+
 async fn api_events(AxState(app): AxState<App>) -> Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>> {
     let first = futures::stream::once({
         let st = app.svc.state();
@@ -408,6 +509,12 @@ struct SimpleQuery {
     wait: Option<String>,
     /// Trims blank margins (useful for pages rendered at A4).
     trim: Option<String>,
+    /// PDF pages or EPUB chapters to print, like "1-3,5".
+    pages: Option<String>,
+    /// Adds the job to the queue instead of printing it now.
+    queue: Option<String>,
+    /// Queue entry name.
+    title: Option<String>,
     // Text only
     size: Option<f32>,
     bold: Option<String>,
@@ -467,7 +574,32 @@ fn fail(status: StatusCode, code: &str, message: impl ToString) -> Response {
     (status, Json(SimpleResult { ok: false, job: None, error: Some(code.into()), message: Some(message.to_string()) })).into_response()
 }
 
-async fn run_simple(app: &App, pages: Vec<Vec<u8>>, options: JobOptions, wait: bool, source: String) -> Response {
+struct Target {
+    wait: bool,
+    queue: Option<String>,
+}
+
+impl SimpleQuery {
+    fn target(&self, default_title: &str) -> Target {
+        Target {
+            wait: self.wait.as_deref() != Some("0"),
+            queue: flag(&self.queue).then(|| self.title.clone().unwrap_or_else(|| default_title.to_string())),
+        }
+    }
+}
+
+async fn run_simple(app: &App, pages: Vec<Vec<u8>>, options: JobOptions, target: Target, source: String) -> Response {
+    if let Some(title) = target.queue {
+        let svc = app.svc.clone();
+        let req = PrintRequest { pages, options, source };
+        let res = tokio::task::spawn_blocking(move || svc.queue_add(req, &title, "api")).await;
+        return match res {
+            Ok(Ok(id)) => (StatusCode::ACCEPTED, Json(SimpleResult { ok: true, job: Some(id), error: None, message: None })).into_response(),
+            Ok(Err(e)) => fail(StatusCode::BAD_REQUEST, &error_code(&e.to_string()), e),
+            Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, "print_failed", e),
+        };
+    }
+    let wait = target.wait;
     if app.svc.state().printer.is_none() {
         return fail(StatusCode::SERVICE_UNAVAILABLE, "not_connected", "no printer connected in Raketo");
     }
@@ -513,21 +645,36 @@ async fn simple_print(
     if body.is_empty() {
         return fail(StatusCode::BAD_REQUEST, "bad_document", "empty body: send an image");
     }
-    if body.starts_with(b"%PDF") {
-        return fail(
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "unsupported_format",
-            "PDF is not rendered by the API yet: print it to the Raketo printer, or send an image",
-        );
+    let (pdf, epub) = (docs::is_pdf(&body), docs::is_epub(&body));
+    if pdf || epub {
+        let width = app.svc.state().printer.map(|p| p.width_px).unwrap_or(384);
+        let (range, size) = (q.pages.clone(), q.size.unwrap_or(24.0));
+        let rendered = tokio::task::spawn_blocking(move || {
+            if pdf {
+                docs::render_pdf(&body, width, range.as_deref())
+            } else {
+                docs::render_epub(&body, width, range.as_deref(), size)
+            }
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+        let pages = match rendered {
+            Ok(p) => p,
+            Err(e) => return fail(StatusCode::BAD_REQUEST, "bad_document", e),
+        };
+        let pages: Vec<image::DynamicImage> = pages.into_iter().map(image::DynamicImage::ImageLuma8).collect();
+        let pages: Vec<_> = if flag(&q.trim) { pages.iter().filter_map(raster::trim).collect() } else { pages };
+        let encoded: Vec<Vec<u8>> = pages.iter().filter_map(png).collect();
+        let title = if pdf { "PDF" } else { "EPUB" };
+        return run_simple(&app, encoded, q.options(Content::Text), q.target(title), peer.ip().to_string()).await;
     }
     let ctype = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let Some(pages) = raster::decode(&ctype, &body) else {
-        return fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_format", "send PNG, JPEG, GIF, WebP, BMP, PWG raster or URF");
+        return fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_format", "send PNG, JPEG, GIF, WebP, BMP, PDF, EPUB, PWG raster or URF");
     };
     let pages: Vec<_> = if flag(&q.trim) { pages.iter().filter_map(raster::trim).collect() } else { pages };
     let encoded: Vec<Vec<u8>> = pages.iter().filter_map(png).collect();
-    let wait = q.wait.as_deref() != Some("0");
-    run_simple(&app, encoded, q.options(Content::Image), wait, peer.ip().to_string()).await
+    run_simple(&app, encoded, q.options(Content::Image), q.target("Image"), peer.ip().to_string()).await
 }
 
 async fn simple_print_text(
@@ -552,12 +699,12 @@ async fn simple_print_text(
             _ => text::Align::Left,
         },
     };
+    let title: String = text.trim().lines().next().unwrap_or("Text").chars().take(40).collect();
     let img = tokio::task::spawn_blocking(move || text::render(&text, width, &style)).await;
     let Some(page) = img.ok().and_then(|i| png(&image::DynamicImage::ImageLuma8(i))) else {
         return fail(StatusCode::INTERNAL_SERVER_ERROR, "print_failed", "text rendering failed");
     };
-    let wait = q.wait.as_deref() != Some("0");
-    run_simple(&app, vec![page], q.options(Content::Text), wait, peer.ip().to_string()).await
+    run_simple(&app, vec![page], q.options(Content::Text), q.target(&title), peer.ip().to_string()).await
 }
 
 #[derive(Serialize)]

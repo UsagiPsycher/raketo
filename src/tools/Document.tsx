@@ -3,13 +3,15 @@ import { FileUp } from "lucide-react";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { t } from "../i18n";
-import { canvas, fileToDataUrl, fitImage, loadImage, noAdjust, textBlock } from "../lib/canvas";
-import { Empty, Field, Toggle, type ToolProps } from "./ui";
+import { canvas, fileToDataUrl, fitImage, FONTS, loadImage, noAdjust, textBlock, type FontId } from "../lib/canvas";
+import { openEpub, renderChapter, type Book } from "../lib/epub";
+import { Empty, Field, Range, Toggle, type ToolProps } from "./ui";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 type Source =
   | { kind: "pdf"; name: string; doc: pdfjs.PDFDocumentProxy }
+  | { kind: "epub"; name: string; book: Book }
   | { kind: "text"; name: string; text: string }
   | { kind: "image"; name: string; img: HTMLImageElement };
 
@@ -42,6 +44,8 @@ export function Document({ ctx, onOutput }: ToolProps) {
   const [src, setSrc] = useState<Source | null>(null);
   const [range, setRange] = useState("");
   const [landscape, setLandscape] = useState(false);
+  const [size, setSize] = useState(22);
+  const [font, setFont] = useState<FontId>("serif");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -53,6 +57,12 @@ export function Document({ ctx, onOutput }: ToolProps) {
       if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
         const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
         setSrc({ kind: "pdf", name: f.name, doc });
+      } else if (f.type === "application/epub+zip" || f.name.toLowerCase().endsWith(".epub")) {
+        const book = openEpub(new Uint8Array(await f.arrayBuffer()));
+        setSrc({ kind: "epub", name: f.name, book });
+        // A whole book is a lot of paper: start with the first chapter.
+        setRange("1");
+        return;
       } else if (f.type.startsWith("image/")) {
         setSrc({ kind: "image", name: f.name, img: await loadImage(await fileToDataUrl(f)) });
       } else {
@@ -66,7 +76,7 @@ export function Document({ ctx, onOutput }: ToolProps) {
     }
   };
 
-  const count = src?.kind === "pdf" ? src.doc.numPages : 1;
+  const count = src?.kind === "pdf" ? src.doc.numPages : src?.kind === "epub" ? src.book.chapters.length : 1;
 
   useEffect(() => {
     let live = true;
@@ -80,18 +90,26 @@ export function Document({ ctx, onOutput }: ToolProps) {
           pages.push(await renderPdfPage(src.doc, n, ctx.width, landscape));
         }
         setLoading(false);
+      } else if (src.kind === "epub") {
+        setLoading(true);
+        for (const n of parseRange(range, count)) {
+          if (!live) return;
+          pages.push(...(await renderChapter(src.book, src.book.chapters[n - 1], ctx.width, size, font)));
+        }
+        setLoading(false);
       } else if (src.kind === "image") {
         const rotate = landscape && src.img.width > src.img.height ? 90 : 0;
         pages = [fitImage(src.img, ctx.width, { ...noAdjust, rotate })];
       } else {
         pages = [textBlock(src.text, ctx.width, { size: 20, bold: false, align: "left", font: "mono", lineHeight: 1.2 }, 2)];
       }
-      if (live) onOutput({ pages, content: "text" });
+      const title = src.kind === "epub" && src.book.title ? src.book.title : src.name.replace(/\.[^.]+$/, "");
+      if (live) onOutput({ pages, content: "text", title });
     })();
     return () => {
       live = false;
     };
-  }, [src, range, landscape, ctx.width]);
+  }, [src, range, landscape, ctx.width, size, font]);
 
   return (
     <div
@@ -103,7 +121,7 @@ export function Document({ ctx, onOutput }: ToolProps) {
         if (f) open(f);
       }}
     >
-      <input ref={input} type="file" accept=".pdf,.txt,.md,.csv,.log,image/*,text/*" hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
+      <input ref={input} type="file" accept=".pdf,.epub,.txt,.md,.csv,.log,image/*,text/*" hidden onChange={(e) => e.target.files?.[0] && open(e.target.files[0])} />
       <div className="toolbar">
         <button type="button" className="btn" onClick={() => input.current?.click()}>
           <FileUp size={16} /> {t.openDocument}
@@ -121,7 +139,33 @@ export function Document({ ctx, onOutput }: ToolProps) {
               <input type="text" value={range} placeholder={`${t.allPages} — ${t.pageRange}`} onChange={(e) => setRange(e.target.value)} />
             </Field>
           )}
-          {src.kind !== "text" && <Toggle label={t.landscape} tip={t.landscapeTip} checked={landscape} onChange={setLandscape} />}
+          {src.kind === "epub" && (
+            <>
+              <Field label={`${t.chapters} (${count})`}>
+                <input type="text" value={range} placeholder={`${t.allPages} — ${t.pageRange}`} onChange={(e) => setRange(e.target.value)} />
+              </Field>
+              <ol className="chapters">
+                {src.book.chapters.map((c, i) => (
+                  <li key={c.path}>
+                    <button type="button" className={`link${parseRange(range, count).includes(i + 1) ? " on" : ""}`} onClick={() => setRange(String(i + 1))}>
+                      {c.title}
+                    </button>
+                  </li>
+                ))}
+              </ol>
+              <div className="row wrap">
+                <select value={font} onChange={(e) => setFont(e.target.value as FontId)} aria-label={t.font}>
+                  {FONTS.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Range label={t.textSize} min={14} max={40} value={size} onChange={setSize} />
+            </>
+          )}
+          {(src.kind === "pdf" || src.kind === "image") && <Toggle label={t.landscape} tip={t.landscapeTip} checked={landscape} onChange={setLandscape} />}
         </div>
       )}
     </div>

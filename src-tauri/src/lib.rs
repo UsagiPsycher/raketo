@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use raketo_core::JobOptions;
-use raketo_service::{PrintRequest, PrinterSettings, Seen, Service, Settings, State};
+use raketo_service::{PrintRequest, PrinterSettings, QueueMode, QueueState, Seen, Service, Settings, State};
 use serde::Serialize;
 use raketo_server::{Server, ShareInfo};
 use tauri::{Emitter, Manager};
@@ -229,6 +229,69 @@ async fn print_gray_wedge(svc: tauri::State<'_, Service>) -> Res<u64> {
     svc.print_gray_wedge().map_err(err)
 }
 
+#[tauri::command]
+fn queue_state(svc: tauri::State<'_, Service>) -> QueueState {
+    svc.queue_state()
+}
+
+#[tauri::command]
+async fn queue_add(svc: tauri::State<'_, Service>, pages: Vec<String>, options: JobOptions, title: String, kind: String) -> Res<u64> {
+    let pages = decode_pages(&pages)?;
+    let svc = svc.inner().clone();
+    tokio::task::spawn_blocking(move || svc.queue_add(PrintRequest { pages, options, source: "local".into() }, &title, &kind))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
+#[tauri::command]
+fn queue_remove(svc: tauri::State<'_, Service>, id: u64) -> QueueState {
+    svc.queue_remove(id);
+    svc.queue_state()
+}
+
+#[tauri::command]
+fn queue_move(svc: tauri::State<'_, Service>, id: u64, index: usize) -> QueueState {
+    svc.queue_move(id, index);
+    svc.queue_state()
+}
+
+#[tauri::command]
+fn queue_select(svc: tauri::State<'_, Service>, id: Option<u64>, selected: bool) -> QueueState {
+    svc.queue_select(id, selected);
+    svc.queue_state()
+}
+
+#[tauri::command]
+fn queue_clear(svc: tauri::State<'_, Service>) -> QueueState {
+    svc.queue_clear();
+    svc.queue_state()
+}
+
+#[tauri::command]
+fn queue_mode(svc: tauri::State<'_, Service>, mode: QueueMode) -> QueueState {
+    svc.set_queue_mode(mode);
+    svc.queue_state()
+}
+
+#[tauri::command]
+async fn queue_start(svc: tauri::State<'_, Service>) -> Res<QueueState> {
+    svc.queue_start().map_err(err)?;
+    Ok(svc.queue_state())
+}
+
+#[tauri::command]
+fn queue_continue(svc: tauri::State<'_, Service>) -> QueueState {
+    svc.queue_continue();
+    svc.queue_state()
+}
+
+#[tauri::command]
+fn queue_stop(svc: tauri::State<'_, Service>) -> QueueState {
+    svc.queue_stop();
+    svc.queue_state()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::Builder::new().arg(AUTOSTART_ARG).app_name("Raketo").build())
@@ -296,7 +359,17 @@ pub fn run() {
             set_share,
             retry_firewall,
             get_autostart,
-            set_autostart
+            set_autostart,
+            queue_state,
+            queue_add,
+            queue_remove,
+            queue_move,
+            queue_select,
+            queue_clear,
+            queue_mode,
+            queue_start,
+            queue_continue,
+            queue_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running Raketo");

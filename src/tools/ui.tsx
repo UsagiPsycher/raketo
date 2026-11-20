@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { Content } from "../api";
 
 export interface ToolCtx {
@@ -12,6 +12,10 @@ export interface Output {
   content: Content;
   label?: boolean;
   labelHeightMm?: number;
+  /** Name shown in the queue. */
+  title?: string;
+  /** When set, "Add to queue" adds one sheet per entry instead of one for all pages. */
+  sheets?: { pages: HTMLCanvasElement[]; title: string }[];
 }
 
 export interface ToolProps {
@@ -108,4 +112,18 @@ export function IconButton({ onClick, label, children, disabled }: { onClick: ()
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+/** Checkbox that can show a third, mixed state (some of a list checked). */
+export function Check({ checked, mixed, onChange, label, hideLabel }: { checked: boolean; mixed?: boolean; onChange: (v: boolean) => void; label: string; hideLabel?: boolean }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!mixed;
+  }, [mixed]);
+  return (
+    <label className="check-box" title={hideLabel ? label : undefined}>
+      <input ref={ref} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} aria-label={hideLabel ? label : undefined} />
+      {!hideLabel && <span>{label}</span>}
+    </label>
+  );
 }
