@@ -15,7 +15,7 @@ futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 mdns-sd = "0.13"
 local-ip-address = "0.6"
 gethostname = "1"
@@ -24,3 +24,5 @@ mime_guess = "2"
 log = "0.4"
 uuid = { version = "1", features = ["v5"] }
 ab_glyph = "0.2"
+hayro = "0.9"
+zip = { version = "2", default-features = false, features = ["deflate"] }

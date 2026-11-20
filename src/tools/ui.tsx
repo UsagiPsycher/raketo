@@ -12,6 +12,8 @@ export interface Output {
   content: Content;
   label?: boolean;
   labelHeightMm?: number;
+  /** Name shown in the queue. */
+  title?: string;
 }
 
 export interface ToolProps {

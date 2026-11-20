@@ -89,6 +89,36 @@ export interface Settings {
   shareOnLan: boolean;
   lanPort: number | null;
   lanName: string | null;
+  queue: QueueMode;
+}
+
+export interface QueueMode {
+  /** Wait for the user to tear off each sheet before the next one. */
+  pause: boolean;
+  /** Without pauses, print a dashed cut line between sheets. */
+  separators: boolean;
+}
+
+export interface QueueEntry {
+  id: number;
+  title: string;
+  kind: string;
+  thumb: string;
+  copies: number;
+  done: number;
+  lengthMm: number;
+  label: boolean;
+  source: string;
+}
+
+export interface QueueState {
+  items: QueueEntry[];
+  mode: QueueMode;
+  running: boolean;
+  waiting: boolean;
+  current: number | null;
+  job: number | null;
+  error: string | null;
 }
 
 export interface ShareInfo {
@@ -103,7 +133,8 @@ export interface ShareInfo {
 export type ServiceEvent =
   | ({ type: "state" } & State)
   | { type: "progress"; job: number; sent: number; total: number }
-  | { type: "jobDone"; job: number; ok: boolean; error: string | null };
+  | { type: "jobDone"; job: number; ok: boolean; error: string | null }
+  | ({ type: "queue" } & QueueState);
 
 async function http<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(`./api/${path}`, {
@@ -137,6 +168,18 @@ export const api = {
     call<string[]>("preview", { pages, options, modelNo }),
   print: (pages: string[], options: JobOptions) => call<number>("print", { pages, options }),
   printGrayWedge: () => call<number>("print_gray_wedge"),
+  queue: {
+    state: () => call<QueueState>("queue_state", {}, "queue", true),
+    add: (pages: string[], options: JobOptions, title: string, kind: string) =>
+      call<number>("queue_add", { pages, options, title, kind }, "queue/add"),
+    remove: (id: number) => call<QueueState>("queue_remove", { id }, "queue/remove"),
+    move: (id: number, index: number) => call<QueueState>("queue_move", { id, index }, "queue/move"),
+    clear: () => call<QueueState>("queue_clear", {}, "queue/clear"),
+    mode: (mode: QueueMode) => call<QueueState>("queue_mode", { mode }, "queue/mode"),
+    start: () => call<QueueState>("queue_start", {}, "queue/start"),
+    next: () => call<QueueState>("queue_continue", {}, "queue/continue"),
+    stop: () => call<QueueState>("queue_stop", {}, "queue/stop"),
+  },
   shareInfo: () => (inTauri ? invoke<ShareInfo | null>("share_info") : Promise.resolve(null)),
   setShare: (enabled: boolean) => invoke<Settings>("set_share", { enabled }),
   retryFirewall: () => invoke<void>("retry_firewall"),

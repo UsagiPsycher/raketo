@@ -3,7 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { t } from "../i18n";
 import { canvas, fontCss, FONTS, setFont, stack, textBlock, type FontId, type TextStyle } from "../lib/canvas";
 import { TextControls } from "./Compose";
-import { Field, IconButton, Toggle, type ToolProps } from "./ui";
+import { Field, IconButton, Segmented, Toggle, type ToolProps } from "./ui";
 
 function dateLine(width: number) {
   const s = t.date(new Date());
@@ -35,7 +35,8 @@ export function Note({ ctx, onOutput }: ToolProps) {
     if (date) parts.push(dateLine(inner));
     if (title.trim()) parts.push(textBlock(title, inner, { ...style, size: Math.round(style.size * 1.3), bold: true }, 4));
     if (body.trim()) parts.push(textBlock(body, inner, style, 4));
-    onOutput({ pages: [framed(stack(parts, ctx.width, 10), ctx.width, frame)], content: "text" });
+    const name = title.trim() || body.trim().split("\n")[0];
+    onOutput({ pages: [framed(stack(parts, ctx.width, 10), ctx.width, frame)], content: "text", title: name });
   }, [title, body, style, date, frame, ctx.width]);
 
   return (
@@ -64,41 +65,108 @@ interface Task {
 }
 let nextTask = 1;
 
+type Orientation = "portrait" | "landscape";
+
+/** Turns a band laid out along the roll so it prints lengthwise, readable from the start of the strip. */
+function alongRoll(band: HTMLCanvasElement): HTMLCanvasElement {
+  const out = canvas(band.height, band.width);
+  const o = out.getContext("2d")!;
+  o.translate(band.height, 0);
+  o.rotate(Math.PI / 2);
+  o.drawImage(band, 0, 0);
+  return out;
+}
+
+function taskRow(it: Task, w: number, size: number, font: FontId): HTMLCanvasElement {
+  const box = Math.round(size * 0.9);
+  const text = textBlock(it.text, w - box - 24, { size, bold: false, align: "left", font });
+  const c = canvas(w, Math.max(text.height, box + 8));
+  const x = c.getContext("2d")!;
+  x.lineWidth = 3;
+  const by = Math.round((Math.min(text.height, size * 1.25) - box) / 2) + 2;
+  x.strokeRect(6, by, box, box);
+  if (it.done) {
+    x.beginPath();
+    x.moveTo(6 + box * 0.2, by + box * 0.55);
+    x.lineTo(6 + box * 0.42, by + box * 0.78);
+    x.lineTo(6 + box * 0.82, by + box * 0.22);
+    x.stroke();
+  }
+  x.drawImage(text, box + 20, 0);
+  return c;
+}
+
+/** Landscape: tasks flow in columns across the roll length, the roll width is the page height. */
+function landscapeList(makeHeader: (w: number) => HTMLCanvasElement[], items: Task[], rollWidth: number, size: number, font: FontId): HTMLCanvasElement {
+  const gap = 8;
+  const pad = 10;
+  const probe = canvas(1, 1).getContext("2d")!;
+  probe.font = `400 ${size}px ${fontCss(font)}`;
+  const box = Math.round(size * 0.9);
+  // Column width: the longest task, between one and two roll widths.
+  const longest = Math.max(0, ...items.map((i) => probe.measureText(i.text).width));
+  const colW = Math.round(Math.min(rollWidth * 2, Math.max(rollWidth, longest + box + 34)));
+  // The header is measured at its narrowest; laid out wider it only gets shorter.
+  const minHead = Math.round(rollWidth * 1.5);
+  const estimate = makeHeader(minHead);
+  const headH = estimate.reduce((a, h) => a + h.height, 0) + (estimate.length ? gap : 0);
+  const avail = Math.max(size * 2, rollWidth - pad * 2 - headH);
+  const cols: HTMLCanvasElement[][] = [[]];
+  let used = 0;
+  for (const it of items) {
+    const row = taskRow(it, colW, size, font);
+    if (used > 0 && used + row.height > avail) {
+      cols.push([]);
+      used = 0;
+    }
+    cols[cols.length - 1].push(row);
+    used += row.height + gap;
+  }
+  const colsW = cols.length * colW + (cols.length - 1) * 24;
+  const header = makeHeader(Math.max(colsW, minHead));
+  const len = Math.max(colsW, ...header.map((h) => h.width)) + pad * 2;
+  const band = canvas(len, rollWidth);
+  const x = band.getContext("2d")!;
+  let y = pad;
+  for (const h of header) {
+    x.drawImage(h, pad, y);
+    y += h.height;
+  }
+  y += header.length ? gap : 0;
+  cols.forEach((col, i) => {
+    let cy = y;
+    const cx = pad + i * (colW + 24);
+    for (const r of col) {
+      x.drawImage(r, cx, cy);
+      cy += r.height + gap;
+    }
+  });
+  return alongRoll(band);
+}
+
 export function Todo({ ctx, onOutput }: ToolProps) {
   const [title, setTitle] = useState(t.todoTitle);
   const [tasks, setTasks] = useState<Task[]>([{ id: nextTask++, text: "", done: false }]);
   const [date, setDate] = useState(true);
   const [size, setSize] = useState(26);
   const [font, setFontId] = useState<FontId>("sans");
+  const [orientation, setOrientation] = useState<Orientation>("portrait");
 
   useEffect(() => {
     const items = tasks.filter((x) => x.text.trim());
     if (!items.length && !title.trim()) return onOutput({ pages: [], content: "text" });
-    const w = ctx.width;
-    const parts: HTMLCanvasElement[] = [];
-    if (date) parts.push(dateLine(w));
-    if (title.trim()) parts.push(textBlock(title, w, { size: Math.round(size * 1.4), bold: true, align: "left", font }, 4));
-    const box = Math.round(size * 0.9);
-    for (const it of items) {
-      const st: TextStyle = { size, bold: false, align: "left", font };
-      const text = textBlock(it.text, w - box - 24, st);
-      const c = canvas(w, Math.max(text.height, box + 8));
-      const x = c.getContext("2d")!;
-      x.lineWidth = 3;
-      const by = Math.round((Math.min(text.height, size * 1.25) - box) / 2) + 2;
-      x.strokeRect(6, by, box, box);
-      if (it.done) {
-        x.beginPath();
-        x.moveTo(6 + box * 0.2, by + box * 0.55);
-        x.lineTo(6 + box * 0.42, by + box * 0.78);
-        x.lineTo(6 + box * 0.82, by + box * 0.22);
-        x.stroke();
-      }
-      x.drawImage(text, box + 20, 0);
-      parts.push(c);
-    }
-    onOutput({ pages: [stack(parts, w, 8)], content: "text" });
-  }, [title, tasks, date, size, font, ctx.width]);
+    const landscape = orientation === "landscape";
+    const header = (w: number) => {
+      const h: HTMLCanvasElement[] = [];
+      if (date) h.push(dateLine(w));
+      if (title.trim()) h.push(textBlock(title, w, { size: Math.round(size * 1.4), bold: true, align: "left", font }, 4));
+      return h;
+    };
+    const page = landscape
+      ? landscapeList(header, items, ctx.width, size, font)
+      : stack([...header(ctx.width), ...items.map((it) => taskRow(it, ctx.width, size, font))], ctx.width, 8);
+    onOutput({ pages: [page], content: "text", title: title.trim() || t.tools.todo });
+  }, [title, tasks, date, size, font, orientation, ctx.width]);
 
   return (
     <div className="tool">
@@ -117,6 +185,15 @@ export function Todo({ ctx, onOutput }: ToolProps) {
           <input type="number" className="num" min={14} max={80} value={size} onChange={(e) => setSize(Number(e.target.value) || 14)} aria-label={t.size} title={t.size} />
           <Toggle label={t.showDate} checked={date} onChange={setDate} />
         </div>
+        <Segmented<Orientation>
+          label={t.orientation}
+          value={orientation}
+          onChange={setOrientation}
+          options={[
+            { value: "portrait", label: t.portrait, tip: t.portraitTip },
+            { value: "landscape", label: t.landscapeTodo, tip: t.landscapeTodoTip },
+          ]}
+        />
       </div>
       <ul className="tasks">
         {tasks.map((it) => (
@@ -186,7 +263,7 @@ export function Banner({ ctx, onOutput }: ToolProps) {
     o.translate(h, 0);
     o.rotate(Math.PI / 2);
     o.drawImage(band, 0, 0);
-    onOutput({ pages: [out], content: "text" });
+    onOutput({ pages: [out], content: "text", title: text });
   }, [text, font, bold, border, ctx.width]);
 
   return (

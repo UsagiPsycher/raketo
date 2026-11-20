@@ -9,7 +9,7 @@ pub const USAGE: &str = "\
 Print through a running Raketo app.
 
 Usage:
-  raketo print <file | ->     Print an image (PNG, JPEG, GIF, WebP, BMP)
+  raketo print <file | ->     Print an image (PNG, JPEG, GIF, WebP, BMP), a PDF or an EPUB
   raketo text <text | ->      Print text
   raketo status               Show the connected printer
   raketo help                 Show this help
@@ -22,10 +22,13 @@ Print options:
   --label                     Label paper: one copy per label
   --label-height <mm>         Label height, to bound the gap search
   --trim                      Remove blank margins around the image
-  --no-wait                   Return once the job is queued
+  --pages <list>              PDF pages or EPUB chapters, like 1-3,5 (default: all)
+  --queue                     Add to the Raketo queue instead of printing now
+  --title <name>              Name shown in the queue
+  --no-wait                   Return once the job is sent
 
 Text options:
-  --size <px>                 Font size in printer dots (default 28)
+  --size <px>                 Font size in printer dots (default 28, EPUB 24)
   --bold                      Bold text
   --center, --right           Alignment
 
@@ -60,6 +63,18 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--gray" => o.query.push(("gray".into(), "1".into())),
             "--label" => o.query.push(("label".into(), "1".into())),
             "--trim" => o.query.push(("trim".into(), "1".into())),
+            "--queue" => o.query.push(("queue".into(), "1".into())),
+            "--title" => {
+                let v = value("--title")?;
+                o.query.push(("title".into(), v));
+            }
+            "--pages" => {
+                let v = value("--pages")?;
+                if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit() || ", -;".contains(c)) {
+                    return Err("--pages is a list like 1-3,5".into());
+                }
+                o.query.push(("pages".into(), v));
+            }
             "--no-wait" => o.query.push(("wait".into(), "0".into())),
             "--bold" => o.query.push(("bold".into(), "1".into())),
             "--center" => o.query.push(("align".into(), "center".into())),
@@ -284,7 +299,11 @@ pub fn run(args: &[String]) -> i32 {
             let path = if cmd == "print" { "/print" } else { "/print/text" };
             let url = with_query(format!("{}{path}", base_url(&o)), &o.query);
             let ctype = if cmd == "text" { "text/plain; charset=utf-8" } else { "application/octet-stream" };
-            send(agent().post(&url).set("content-type", ctype), &body, o.json)
+            let code = send(agent().post(&url).set("content-type", ctype), &body, o.json);
+            if code == 0 && !o.json && o.query.iter().any(|(k, _)| k == "queue") {
+                println!("Added to the queue; start it from Raketo.");
+            }
+            code
         }
         other => {
             eprintln!("raketo: unknown command {other}\nRun `raketo help` for usage.");
@@ -320,5 +339,13 @@ mod tests {
     fn not_running_is_exit_2() {
         let code = run(&s(&["status", "--url", "127.0.0.1:1"]));
         assert_eq!(code, 2);
+    }
+
+    #[test]
+    fn document_options() {
+        let o = parse(&s(&["book.epub", "--pages", "2-4", "--queue", "--title", "Chapter 2"])).unwrap();
+        assert!(o.query.contains(&("pages".into(), "2-4".into())));
+        assert!(o.query.contains(&("queue".into(), "1".into())));
+        assert!(parse(&s(&["--pages", "two"])).is_err());
     }
 }

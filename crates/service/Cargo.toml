@@ -14,3 +14,4 @@ serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
 thiserror = "2"
 log = "0.4"
+base64 = "0.22"

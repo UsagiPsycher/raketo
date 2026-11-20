@@ -402,3 +402,31 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .printer { border-left: 0; border-top: 1px solid var(--line); }
   .ticket-scroll { max-height: 60vh; padding: 0 16px 20px; }
 }
+
+/* Queue: planned sheets drawn as paper */
+.count { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 650; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.queue { list-style: none; max-width: 300px; margin: 0 auto; padding: 14px 0 8px; }
+.sheet { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: 12px; }
+.sheet-paper { position: relative; padding: 8px 6px; min-height: 72px; background: var(--paper); box-shadow: 0 1px 0 rgb(42 38 51 / 0.08); }
+.sheet-paper img { display: block; width: 100%; max-height: 150px; object-fit: cover; object-position: top; mix-blend-mode: multiply; }
+.sheet-bar { position: absolute; left: 0; top: 0; width: 3px; background: var(--led); transition: height 0.2s; }
+.sheet.now .sheet-paper { box-shadow: inset 0 0 0 2px var(--accent); }
+.sheet-info { display: flex; flex-direction: column; gap: 1px; padding: 8px 0; }
+.sheet-tools { display: flex; gap: 2px; margin-top: 4px; min-height: 28px; align-items: center; }
+/* Pause mode: separate sheets with torn edges */
+.queue.torn .sheet + .sheet { margin-top: 18px; }
+.queue.torn .sheet-paper {
+  --tooth: 6px;
+  padding-bottom: calc(8px + var(--tooth));
+  -webkit-mask: linear-gradient(#000 0 0) top / 100% calc(100% - var(--tooth)) no-repeat,
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(var(--tooth) * 2) var(--tooth) repeat-x;
+  mask: linear-gradient(#000 0 0) top / 100% calc(100% - var(--tooth)) no-repeat,
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(var(--tooth) * 2) var(--tooth) repeat-x;
+}
+/* Back to back: one continuous strip, optionally with cut lines */
+.queue.dashed .sheet + .sheet .sheet-paper { border-top: 2px dashed var(--ink-3); }
+.tear { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink-2); font-weight: 550; }
+.chapters { max-height: 168px; overflow-y: auto; margin: 0; padding: 4px 0 4px 26px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.chapters li { padding: 1px 0; color: var(--ink-3); }
+.chapters .link { text-align: left; color: var(--ink-2); }
+.chapters .link.on { color: var(--accent); font-weight: 600; }

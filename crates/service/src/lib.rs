@@ -17,6 +17,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
 
+mod queue;
+pub use queue::{QueueEntry, QueueMode, QueueState};
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("no printer connected")]
@@ -70,6 +73,7 @@ pub struct Settings {
     pub share_on_lan: bool,
     pub lan_port: Option<u16>,
     pub lan_name: Option<String>,
+    pub queue: QueueMode,
 }
 
 impl Default for Settings {
@@ -82,6 +86,7 @@ impl Default for Settings {
             share_on_lan: true,
             lan_port: None,
             lan_name: None,
+            queue: QueueMode::default(),
         }
     }
 }
@@ -102,6 +107,7 @@ pub enum ServiceEvent {
     State(State),
     Progress { job: u64, sent: usize, total: usize },
     JobDone { job: u64, ok: bool, error: Option<String> },
+    Queue(QueueState),
 }
 
 /// Pages and options of a print request, as sent by any client.
@@ -127,6 +133,7 @@ struct Inner {
     events: broadcast::Sender<ServiceEvent>,
     job_lock: Mutex<()>,
     next_job: AtomicU64,
+    queue: queue::Queue,
 }
 
 #[derive(Clone)]
@@ -151,6 +158,7 @@ impl Service {
             events,
             job_lock: Mutex::new(()),
             next_job: AtomicU64::new(1),
+            queue: Default::default(),
         }));
         svc
     }
@@ -382,23 +390,35 @@ impl Service {
     }
 
     fn enqueue(&self, work: Work, opts: JobOptions, calibrated: bool) -> u64 {
-        let id = self.0.next_job.fetch_add(1, Ordering::SeqCst);
+        let id = self.new_job_id();
         let svc = self.clone();
         self.update(|s| s.queue += 1);
         tokio::spawn(async move {
-            let _guard = svc.0.job_lock.lock().await;
-            svc.update(|s| {
-                s.queue = s.queue.saturating_sub(1);
-                s.busy = true;
-            });
-            let res = svc.run_job(id, work, opts, calibrated).await;
-            svc.update(|s| s.busy = false);
-            svc.0
-                .events
-                .send(ServiceEvent::JobDone { job: id, ok: res.is_ok(), error: res.err().map(|e| e.to_string()) })
-                .ok();
+            svc.run_locked(id, work, opts, calibrated, true).await.ok();
         });
         id
+    }
+
+    fn new_job_id(&self) -> u64 {
+        self.0.next_job.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Runs one job once the printer is free, and reports its end.
+    async fn run_locked(&self, id: u64, work: Work, opts: JobOptions, calibrated: bool, counted: bool) -> Result<()> {
+        let _guard = self.0.job_lock.lock().await;
+        self.update(|s| {
+            if counted {
+                s.queue = s.queue.saturating_sub(1);
+            }
+            s.busy = true;
+        });
+        let res = self.run_job(id, work, opts, calibrated).await;
+        self.update(|s| s.busy = false);
+        self.0
+            .events
+            .send(ServiceEvent::JobDone { job: id, ok: res.is_ok(), error: res.as_ref().err().map(|e| e.to_string()) })
+            .ok();
+        res
     }
 
     async fn run_job(&self, id: u64, work: Work, opts: JobOptions, calibrated: bool) -> Result<()> {

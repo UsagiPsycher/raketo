@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Copy, QrCode, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, Bluetooth, Loader2, Printer, RefreshCw, SlidersHorizontal, X } from "lucide-react";
-import { api, type ShareInfo, type Content, type ModelSummary, type PrinterInfo, type Seen, type Settings, type State, type Status } from "./api";
+import { Copy, ListPlus, QrCode, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, Bluetooth, Loader2, Printer, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { api, type ShareInfo, type Content, type ModelSummary, type PrinterInfo, type QueueState, type Seen, type Settings, type State, type Status } from "./api";
 import { t } from "./i18n";
 import { qrCanvas } from "./lib/canvas";
+import { QueueControls, QueueList, sheetsLeft } from "./Queue";
 import { Range, Segmented, Toggle } from "./tools/ui";
 
 export interface JobUi {
@@ -218,6 +219,9 @@ export function PrinterPanel({
   canPrint,
   progress,
   onPrint,
+  onQueue,
+  queue,
+  queueProgress,
   message,
 }: {
   state: State;
@@ -234,11 +238,15 @@ export function PrinterPanel({
   canPrint: boolean;
   progress: number | null;
   onPrint: () => void;
+  onQueue: () => void;
+  queue: QueueState;
+  queueProgress: number | null;
   message: { kind: "ok" | "error"; text: string } | null;
 }) {
   const [connecting, setConnecting] = useState(false);
   const [calibrating, setCalibrating] = useState(false);
   const [mm, setMm] = useState(0);
+  const [view, setView] = useState<"preview" | "queue">("preview");
   useEffect(() => {
     let live = true;
     Promise.all(previews.map((src) => new Promise<number>((res) => {
@@ -310,7 +318,9 @@ export function PrinterPanel({
       </div>
 
       <div className="ticket-scroll">
-        {previews.length === 0 ? (
+        {view === "queue" ? (
+          <QueueList queue={queue} progress={queueProgress} />
+        ) : previews.length === 0 ? (
           <div className="ticket empty-ticket">
             <p>{t.emptyTicket}</p>
           </div>
@@ -324,6 +334,19 @@ export function PrinterPanel({
       </div>
 
       <div className="job">
+        <Segmented<"preview" | "queue">
+          label={t.queue}
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "preview", label: t.preview },
+            { value: "queue", label: <span className="row">{t.queue}{queue.items.length > 0 && <span className="count">{sheetsLeft(queue)}</span>}</span> },
+          ]}
+        />
+        {view === "queue" ? (
+          <QueueControls queue={queue} canPrint={!!p && (problem === null || problem === "low_battery")} progress={queueProgress} />
+        ) : (
+          <>
         <Segmented<Content>
           label={t.content}
           value={job.content}
@@ -352,8 +375,13 @@ export function PrinterPanel({
           )}
           {progress !== null && <span className="bar" style={{ width: `${progress * 100}%` }} />}
         </button>
+        <button type="button" className="btn ghost" onClick={onQueue} disabled={!canPrint} title={t.addToQueue}>
+          <ListPlus size={16} /> {t.addToQueue}
+        </button>
         {state.queue > 0 && <p className="muted small">{t.queued(state.queue)}</p>}
         {message && <p className={message.kind === "error" ? "error" : "ok"}>{message.text}</p>}
+          </>
+        )}
       </div>
       {calibrating && p && <Calibrate printer={p} settings={settings} onSettings={onSettings} onClose={() => setCalibrating(false)} />}
     </aside>

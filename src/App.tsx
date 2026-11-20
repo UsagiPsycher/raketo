@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { CheckSquare, FileText, Flag, Image as ImageIcon, LayoutList, StickyNote, Tag } from "lucide-react";
-import { api, type Content, type ModelSummary, type Settings, type State } from "./api";
+import { api, type Content, type ModelSummary, type QueueState, type Settings, type State } from "./api";
 import { t } from "./i18n";
 import { toPng } from "./lib/canvas";
 import { PrinterPanel, type JobUi } from "./PrinterPanel";
@@ -25,6 +25,7 @@ const TOOLS: { id: ToolId; icon: typeof ImageIcon; Comp: ComponentType<ToolProps
 ];
 
 const emptyState: State = { connecting: false, printer: null, status: null, busy: false, queue: 0 };
+const emptyQueue: QueueState = { items: [], mode: { pause: true, separators: true }, running: false, waiting: false, current: null, job: null, error: null };
 
 export default function App() {
   const [state, setState] = useState<State>(emptyState);
@@ -39,13 +40,24 @@ export default function App() {
   const [progress, setProgress] = useState<number | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const currentJob = useRef<number | null>(null);
+  const [queue, setQueue] = useState<QueueState>(emptyQueue);
+  const [queueProgress, setQueueProgress] = useState<number | null>(null);
+  const queueJob = useRef<number | null>(null);
 
   useEffect(() => {
     api.state().then(setState).catch(() => {});
     api.settings().then(setSettings).catch(() => {});
     api.models().then(setModels).catch(() => {});
+    api.queue.state().then(setQueue).catch(() => {});
     return api.onEvent((e) => {
-      if (e.type === "state") {
+      if (e.type === "queue") {
+        const { type: _ignored, ...q } = e;
+        if (q.job !== queueJob.current) setQueueProgress(null);
+        queueJob.current = q.job;
+        setQueue(q);
+      } else if (e.type === "progress" && e.job === queueJob.current) {
+        setQueueProgress(e.total ? e.sent / e.total : 0);
+      } else if (e.type === "state") {
         const { type: _ignored, ...s } = e;
         setState(s);
       } else if (e.type === "progress" && e.job === currentJob.current) {
@@ -115,6 +127,18 @@ export default function App() {
     }
   };
 
+  const addToQueue = async () => {
+    setMessage(null);
+    try {
+      await api.queue.add(pngs, options, out?.title?.trim() || t.tools[tool], tool);
+      const q = await api.queue.state();
+      setQueue(q);
+      setMessage({ kind: "ok", text: t.addedToQueue(q.items.reduce((n, i) => n + i.copies - i.done, 0)) });
+    } catch (e) {
+      setMessage({ kind: "error", text: t.printFailed(String(e)) });
+    }
+  };
+
   return (
     <div className="app">
       <nav className="rail" aria-label="Outils">
@@ -156,6 +180,9 @@ export default function App() {
         canPrint={pngs.length > 0}
         progress={progress}
         onPrint={print}
+        onQueue={addToQueue}
+        queue={queue}
+        queueProgress={queueProgress}
         message={message}
       />
     </div>
