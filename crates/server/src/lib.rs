@@ -123,6 +123,7 @@ pub async fn start(svc: Service, port: u16, name: String, lan: bool) -> std::io:
         .route("/api/queue/add", post(api_queue_add))
         .route("/api/queue/remove", post(api_queue_remove))
         .route("/api/queue/move", post(api_queue_move))
+        .route("/api/queue/select", post(api_queue_select))
         .route("/api/queue/clear", post(api_queue_clear))
         .route("/api/queue/mode", post(api_queue_mode))
         .route("/api/queue/start", post(api_queue_start))
@@ -411,6 +412,13 @@ struct QueueIdBody {
 }
 
 #[derive(Deserialize)]
+struct QueueSelectBody {
+    /// Every sheet when absent.
+    id: Option<u64>,
+    selected: bool,
+}
+
+#[derive(Deserialize)]
 struct QueueModeBody {
     mode: QueueMode,
 }
@@ -441,6 +449,11 @@ async fn api_queue_remove(AxState(app): AxState<App>, Json(b): Json<QueueIdBody>
 
 async fn api_queue_move(AxState(app): AxState<App>, Json(b): Json<QueueIdBody>) -> impl IntoResponse {
     app.svc.queue_move(b.id, b.index);
+    Json(app.svc.queue_state())
+}
+
+async fn api_queue_select(AxState(app): AxState<App>, Json(b): Json<QueueSelectBody>) -> impl IntoResponse {
+    app.svc.queue_select(b.id, b.selected);
     Json(app.svc.queue_state())
 }
 

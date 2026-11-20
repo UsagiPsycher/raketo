@@ -109,6 +109,8 @@ export interface QueueEntry {
   lengthMm: number;
   label: boolean;
   source: string;
+  /** Unchecked sheets stay in the queue but are skipped. */
+  selected: boolean;
 }
 
 export interface QueueState {
@@ -119,6 +121,8 @@ export interface QueueState {
   current: number | null;
   job: number | null;
   error: string | null;
+  /** Sheets printed since the queue was started. */
+  printed: number;
 }
 
 export interface ShareInfo {
@@ -174,6 +178,7 @@ export const api = {
       call<number>("queue_add", { pages, options, title, kind }, "queue/add"),
     remove: (id: number) => call<QueueState>("queue_remove", { id }, "queue/remove"),
     move: (id: number, index: number) => call<QueueState>("queue_move", { id, index }, "queue/move"),
+    select: (id: number | null, selected: boolean) => call<QueueState>("queue_select", { id, selected }, "queue/select"),
     clear: () => call<QueueState>("queue_clear", {}, "queue/clear"),
     mode: (mode: QueueMode) => call<QueueState>("queue_mode", { mode }, "queue/mode"),
     start: () => call<QueueState>("queue_start", {}, "queue/start"),

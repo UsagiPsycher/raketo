@@ -25,7 +25,7 @@ const TOOLS: { id: ToolId; icon: typeof ImageIcon; Comp: ComponentType<ToolProps
 ];
 
 const emptyState: State = { connecting: false, printer: null, status: null, busy: false, queue: 0 };
-const emptyQueue: QueueState = { items: [], mode: { pause: true, separators: true }, running: false, waiting: false, current: null, job: null, error: null };
+const emptyQueue: QueueState = { items: [], mode: { pause: true, separators: true }, running: false, waiting: false, current: null, job: null, error: null, printed: 0 };
 
 export default function App() {
   const [state, setState] = useState<State>(emptyState);
@@ -130,10 +130,11 @@ export default function App() {
   const addToQueue = async () => {
     setMessage(null);
     try {
-      await api.queue.add(pngs, options, out?.title?.trim() || t.tools[tool], tool);
+      const sheets = out?.sheets?.length ? out.sheets.map((sh) => ({ pngs: sh.pages.map(toPng), title: sh.title })) : [{ pngs, title: out?.title ?? "" }];
+      for (const sh of sheets) await api.queue.add(sh.pngs, options, sh.title.trim() || t.tools[tool], tool);
       const q = await api.queue.state();
       setQueue(q);
-      setMessage({ kind: "ok", text: t.addedToQueue(q.items.reduce((n, i) => n + i.copies - i.done, 0)) });
+      setMessage({ kind: "ok", text: t.addedToQueue(sheets.length * job.copies) });
     } catch (e) {
       setMessage({ kind: "error", text: t.printFailed(String(e)) });
     }
@@ -181,6 +182,7 @@ export default function App() {
         progress={progress}
         onPrint={print}
         onQueue={addToQueue}
+        addCount={(out?.sheets?.length || 1) * job.copies}
         queue={queue}
         queueProgress={queueProgress}
         message={message}

@@ -257,6 +257,12 @@ fn queue_move(svc: tauri::State<'_, Service>, id: u64, index: usize) -> QueueSta
 }
 
 #[tauri::command]
+fn queue_select(svc: tauri::State<'_, Service>, id: Option<u64>, selected: bool) -> QueueState {
+    svc.queue_select(id, selected);
+    svc.queue_state()
+}
+
+#[tauri::command]
 fn queue_clear(svc: tauri::State<'_, Service>) -> QueueState {
     svc.queue_clear();
     svc.queue_state()
@@ -358,6 +364,7 @@ pub fn run() {
             queue_add,
             queue_remove,
             queue_move,
+            queue_select,
             queue_clear,
             queue_mode,
             queue_start,

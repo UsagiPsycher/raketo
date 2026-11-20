@@ -65,11 +65,13 @@ entry on Linux.
 
 **Queue.** *Add to queue* keeps the current print for later, so you can plan
 several sheets, from different tools, and print them in one go from the
-*Queue* tab. Each copy counts as a sheet. By default Raketo pauses after each
-sheet until you have torn it off and clicked *Print the next one*. Choose
-*Back to back* to print them all without pausing, with an optional dashed
-cut line between sheets. Jobs sent from other devices or scripts with
-`--queue` land in the same queue.
+*Queue* tab. Each copy counts as a sheet. Several photos opened at once each
+become their own sheet; uncheck the ones you do not want. In the queue, drag
+sheets to reorder them and uncheck the ones to skip: unchecked sheets stay in
+the queue for later. *One at a time* (the default) pauses after each sheet
+until you have torn it off; *Back to back* prints them all without pausing,
+with an optional dashed cut line between sheets. Jobs sent from other devices
+or scripts with `--queue` land in the same queue.
 
 **Documents.** The Document tool opens PDF, EPUB, text and image files. PDF
 pages are scaled to the roll width; EPUB books are reflowed as text at the

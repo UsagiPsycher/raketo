@@ -45,6 +45,8 @@ pub struct QueueEntry {
     pub length_mm: u32,
     pub label: bool,
     pub source: String,
+    /// Unchecked sheets stay in the queue but are skipped.
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,6 +62,8 @@ pub struct QueueState {
     /// Service job id of the sheet being printed, for progress events.
     pub job: Option<u64>,
     pub error: Option<String>,
+    /// Sheets printed since the queue was started.
+    pub printed: u32,
 }
 
 struct Item {
@@ -76,6 +80,7 @@ struct Inner {
     current: Option<u64>,
     job: Option<u64>,
     error: Option<String>,
+    printed: u32,
     next_id: u64,
 }
 
@@ -109,6 +114,7 @@ impl Service {
             current: q.current,
             job: q.job,
             error: q.error.clone(),
+            printed: q.printed,
         }
     }
 
@@ -147,6 +153,7 @@ impl Service {
                     length_mm,
                     label,
                     source: req.source,
+                    selected: true,
                 },
                 pages: req.pages,
                 options: req.options,
@@ -186,6 +193,15 @@ impl Service {
         });
     }
 
+    /// Checks or unchecks one sheet, or all of them without `id`.
+    pub fn queue_select(&self, id: Option<u64>, selected: bool) {
+        self.queue_edit(|q| {
+            for i in q.items.iter_mut().filter(|i| id.is_none_or(|id| i.entry.id == id)) {
+                i.entry.selected = selected;
+            }
+        });
+    }
+
     pub fn set_queue_mode(&self, mode: QueueMode) {
         self.update_settings(|s| s.queue = mode);
         self.queue_changed();
@@ -199,11 +215,12 @@ impl Service {
             return Err(Error::NotConnected);
         }
         let start = self.queue_edit(|q| {
-            if q.running || q.items.is_empty() {
+            if q.running || !q.items.iter().any(|i| i.entry.selected) {
                 return false;
             }
             q.running = true;
             q.error = None;
+            q.printed = 0;
             true
         });
         if start {
@@ -265,8 +282,9 @@ impl Service {
             }
             let next = {
                 let q = self.0.queue.inner.lock().unwrap();
-                q.items.first().map(|i| {
-                    let more = i.entry.done + 1 < i.entry.copies || q.items.len() > 1;
+                let mut chosen = q.items.iter().filter(|i| i.entry.selected);
+                chosen.next().map(|i| {
+                    let more = i.entry.done + 1 < i.entry.copies || chosen.next().is_some();
                     (i.entry.id, i.pages.clone(), i.options.clone(), more)
                 })
             };
@@ -312,6 +330,7 @@ impl Service {
                 q.job = None;
                 match &res {
                     Ok(()) => {
+                        q.printed += 1;
                         if let Some(pos) = q.items.iter().position(|i| i.entry.id == id) {
                             let e = &mut q.items[pos].entry;
                             e.done += 1;
@@ -344,5 +363,35 @@ impl Service {
             q.current = None;
             q.job = None;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn png() -> Vec<u8> {
+        let mut out = Vec::new();
+        image::DynamicImage::new_luma8(8, 8).write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    }
+
+    #[test]
+    fn unchecked_sheets_stay_but_are_not_counted() {
+        let dir = std::env::temp_dir().join(format!("raketo-queue-{}", std::process::id()));
+        let svc = Service::new(Some(dir.clone()));
+        let req = || PrintRequest { pages: vec![png()], options: JobOptions::default(), source: "local".into() };
+        let a = svc.queue_add(req(), "a", "photo").unwrap();
+        let b = svc.queue_add(req(), "b", "photo").unwrap();
+        assert!(svc.queue_state().items.iter().all(|i| i.selected));
+        svc.queue_select(Some(a), false);
+        let s = svc.queue_state();
+        assert_eq!(s.items.len(), 2);
+        assert!(!s.items[0].selected && s.items[1].selected);
+        svc.queue_select(None, false);
+        assert!(svc.queue_state().items.iter().all(|i| !i.selected));
+        svc.queue_select(Some(b), true);
+        assert!(svc.queue_state().items[1].selected);
+        std::fs::remove_dir_all(dir).ok();
     }
 }

@@ -220,6 +220,7 @@ export function PrinterPanel({
   progress,
   onPrint,
   onQueue,
+  addCount,
   queue,
   queueProgress,
   message,
@@ -239,6 +240,8 @@ export function PrinterPanel({
   progress: number | null;
   onPrint: () => void;
   onQueue: () => void;
+  /** Sheets that "Add to queue" would add. */
+  addCount: number;
   queue: QueueState;
   queueProgress: number | null;
   message: { kind: "ok" | "error"; text: string } | null;
@@ -313,6 +316,25 @@ export function PrinterPanel({
         </div>
         {problem && <div className="problem">{t.problems[problem]}</div>}
         {p && api.canManage && <ShareRow settings={settings} onSettings={onSettings} />}
+        <div className="views">
+          <Segmented<"preview" | "queue">
+            label={t.panelView}
+            value={view}
+            onChange={setView}
+            options={[
+              { value: "preview", label: t.preview },
+              {
+                value: "queue",
+                label: (
+                  <span className="row center">
+                    {t.queue}
+                    {queue.items.length > 0 && <span className={`count${queue.running ? " live" : ""}`}>{sheetsLeft(queue)}</span>}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </div>
         <div className="slot" aria-hidden />
         {connecting && <Connect settings={settings} onClose={() => setConnecting(false)} />}
       </div>
@@ -334,15 +356,6 @@ export function PrinterPanel({
       </div>
 
       <div className="job">
-        <Segmented<"preview" | "queue">
-          label={t.queue}
-          value={view}
-          onChange={setView}
-          options={[
-            { value: "preview", label: t.preview },
-            { value: "queue", label: <span className="row">{t.queue}{queue.items.length > 0 && <span className="count">{sheetsLeft(queue)}</span>}</span> },
-          ]}
-        />
         {view === "queue" ? (
           <QueueControls queue={queue} canPrint={!!p && (problem === null || problem === "low_battery")} progress={queueProgress} />
         ) : (
@@ -375,8 +388,8 @@ export function PrinterPanel({
           )}
           {progress !== null && <span className="bar" style={{ width: `${progress * 100}%` }} />}
         </button>
-        <button type="button" className="btn ghost" onClick={onQueue} disabled={!canPrint} title={t.addToQueue}>
-          <ListPlus size={16} /> {t.addToQueue}
+        <button type="button" className="btn ghost" onClick={onQueue} disabled={!canPrint}>
+          <ListPlus size={16} /> {addCount > 1 ? t.addSheets(addCount) : t.addToQueue}
         </button>
         {state.queue > 0 && <p className="muted small">{t.queued(state.queue)}</p>}
         {message && <p className={message.kind === "error" ? "error" : "ok"}>{message.text}</p>}

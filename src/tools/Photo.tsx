@@ -2,23 +2,32 @@ import { useEffect, useRef, useState } from "react";
 import { Camera, ImagePlus, RotateCw, Trash2 } from "lucide-react";
 import { t } from "../i18n";
 import { fileToDataUrl, fitImage, loadImage, noAdjust, type ImageAdjust } from "../lib/canvas";
-import { Empty, IconButton, Range, Toggle, type ToolProps } from "./ui";
+import { Check, Empty, IconButton, Range, Toggle, type ToolProps } from "./ui";
 
 interface Item {
   id: number;
   img: HTMLImageElement;
+  name: string;
   adjust: ImageAdjust;
+  /** Printed and added to the queue. */
+  on: boolean;
 }
 
 let nextId = 1;
 
-export async function imagesFromFiles(files: Iterable<File>): Promise<HTMLImageElement[]> {
-  const out: HTMLImageElement[] = [];
+type Named = { img: HTMLImageElement; name: string };
+
+async function namedImages(files: Iterable<File>): Promise<Named[]> {
+  const out: Named[] = [];
   for (const f of files) {
     if (!f.type.startsWith("image/")) continue;
-    out.push(await loadImage(await fileToDataUrl(f)));
+    out.push({ img: await loadImage(await fileToDataUrl(f)), name: f.name.replace(/\.[^.]+$/, "") });
   }
   return out;
+}
+
+export async function imagesFromFiles(files: Iterable<File>): Promise<HTMLImageElement[]> {
+  return (await namedImages(files)).map((n) => n.img);
 }
 
 export function Photo({ ctx, onOutput }: ToolProps) {
@@ -26,24 +35,27 @@ export function Photo({ ctx, onOutput }: ToolProps) {
   const [cam, setCam] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
-  const add = (imgs: HTMLImageElement[]) =>
-    setItems((s) => [...s, ...imgs.map((img) => ({ id: nextId++, img, adjust: { ...noAdjust } }))]);
+  const add = (imgs: Named[]) =>
+    setItems((s) => [...s, ...imgs.map(({ img, name }) => ({ id: nextId++, img, name: name || `${t.webcam} ${new Date().toLocaleTimeString().slice(0, 5)}`, adjust: { ...noAdjust }, on: true }))]);
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const files = [...(e.clipboardData?.files ?? [])];
-      if (files.length) imagesFromFiles(files).then(add);
+      if (files.length) namedImages(files).then(add);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
   useEffect(() => {
-    onOutput({ pages: items.map((i) => fitImage(i.img, ctx.width, i.adjust)), content: "photo" });
+    const chosen = items.filter((i) => i.on).map((i) => ({ pages: [fitImage(i.img, ctx.width, i.adjust)], title: i.name }));
+    onOutput({ pages: chosen.flatMap((c) => c.pages), content: "photo", title: chosen.length === 1 ? chosen[0].title : undefined, sheets: chosen });
   }, [items, ctx.width]);
 
   const update = (id: number, a: Partial<ImageAdjust>) =>
     setItems((s) => s.map((i) => (i.id === id ? { ...i, adjust: { ...i.adjust, ...a } } : i)));
+  const pick = (id: number | null, on: boolean) => setItems((s) => s.map((i) => (id === null || i.id === id ? { ...i, on } : i)));
+  const chosen = items.filter((i) => i.on).length;
 
   return (
     <div
@@ -51,10 +63,21 @@ export function Photo({ ctx, onOutput }: ToolProps) {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
-        imagesFromFiles(e.dataTransfer.files).then(add);
+        namedImages(e.dataTransfer.files).then(add);
       }}
     >
-      <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && imagesFromFiles(e.target.files).then(add)} />
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          // Copied first: clearing the input empties its live file list.
+          if (e.target.files) namedImages([...e.target.files]).then(add);
+          e.target.value = "";
+        }}
+      />
       <div className="toolbar">
         <button type="button" className="btn" onClick={() => input.current?.click()}>
           <ImagePlus size={16} /> {t.openImages}
@@ -62,6 +85,12 @@ export function Photo({ ctx, onOutput }: ToolProps) {
         <button type="button" className="btn" onClick={() => setCam(true)}>
           <Camera size={16} /> {t.webcam}
         </button>
+        {items.length > 1 && (
+          <>
+            <span className="spacer" />
+            <Check label={t.photosChosen(chosen, items.length)} checked={chosen === items.length} mixed={chosen > 0 && chosen < items.length} onChange={(v) => pick(null, v)} />
+          </>
+        )}
       </div>
       {items.length === 0 ? (
         <Empty>
@@ -74,9 +103,15 @@ export function Photo({ ctx, onOutput }: ToolProps) {
       ) : (
         <ul className="cards">
           {items.map((it) => (
-            <li key={it.id} className="card">
-              <img src={it.img.src} alt="" className="thumb" style={{ transform: `rotate(${it.adjust.rotate}deg)` }} />
+            <li key={it.id} className={`card${it.on ? "" : " off"}`}>
+              <div className="card-pick">
+                <img src={it.img.src} alt="" className="thumb" style={{ transform: `rotate(${it.adjust.rotate}deg)` }} onClick={() => pick(it.id, !it.on)} />
+                <Check label={t.includePhoto(it.name)} hideLabel checked={it.on} onChange={(v) => pick(it.id, v)} />
+              </div>
               <div className="card-body">
+                <strong className="ellipsis card-title" title={it.name}>
+                  {it.name}
+                </strong>
                 <Range label={t.brightness} min={-60} max={60} value={it.adjust.brightness} onChange={(v) => update(it.id, { brightness: v })} />
                 <Range label={t.contrast} min={-60} max={60} value={it.adjust.contrast} onChange={(v) => update(it.id, { contrast: v })} />
                 <div className="row">
@@ -94,7 +129,7 @@ export function Photo({ ctx, onOutput }: ToolProps) {
           ))}
         </ul>
       )}
-      {cam && <Webcam onClose={() => setCam(false)} onShot={(img) => { add([img]); setCam(false); }} />}
+      {cam && <Webcam onClose={() => setCam(false)} onShot={(img) => { add([{ img, name: "" }]); setCam(false); }} />}
     </div>
   );
 }
