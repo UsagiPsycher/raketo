@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
-import { CheckSquare, FileText, Flag, Image as ImageIcon, LayoutList, StickyNote, Tag } from "lucide-react";
+import { CheckSquare, FileText, Flag, Image as ImageIcon, LayoutList, Shapes, StickyNote, Tag } from "lucide-react";
 import { api, type Content, type ModelSummary, type QueueState, type Settings, type State } from "./api";
 import { t } from "./i18n";
 import { toPng } from "./lib/canvas";
 import { PrinterPanel, type JobUi } from "./PrinterPanel";
 import { SettingsMenu } from "./Settings";
 import { Compose } from "./tools/Compose";
+import { Custom } from "./tools/Custom";
 import { Document } from "./tools/Document";
 import { Label } from "./tools/Label";
 import { Photo } from "./tools/Photo";
@@ -17,6 +18,7 @@ type ToolId = keyof typeof t.tools;
 const TOOLS: { id: ToolId; icon: typeof ImageIcon; Comp: ComponentType<ToolProps> }[] = [
   { id: "photo", icon: ImageIcon, Comp: Photo },
   { id: "compose", icon: LayoutList, Comp: Compose },
+  { id: "custom", icon: Shapes, Comp: Custom },
   { id: "document", icon: FileText, Comp: Document },
   { id: "label", icon: Tag, Comp: Label },
   { id: "note", icon: StickyNote, Comp: Note },
