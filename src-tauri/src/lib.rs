@@ -101,6 +101,23 @@ async fn retry_firewall(app: tauri::AppHandle) -> Res<()> {
     Ok(())
 }
 
+/// Argument passed when the system starts Raketo at login.
+const AUTOSTART_ARG: &str = "--autostart";
+
+#[tauri::command]
+fn get_autostart(app: tauri::AppHandle) -> Res<bool> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(err)
+}
+
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Res<bool> {
+    use tauri_plugin_autostart::ManagerExt;
+    let l = app.autolaunch();
+    if enabled { l.enable() } else { l.disable() }.map_err(err)?;
+    l.is_enabled().map_err(err)
+}
+
 type Res<T> = Result<T, String>;
 
 fn err(e: impl ToString) -> String {
@@ -214,7 +231,15 @@ async fn print_gray_wedge(svc: tauri::State<'_, Service>) -> Res<u64> {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::Builder::new().arg(AUTOSTART_ARG).app_name("Raketo").build())
         .setup(|app| {
+            let at_login = std::env::args().any(|a| a == AUTOSTART_ARG);
+            if at_login {
+                // Started with the session: stay out of the way.
+                if let Some(w) = app.get_webview_window("main") {
+                    w.minimize().ok();
+                }
+            }
             let dir = app.path().app_config_dir().ok();
             let svc = Service::new(dir);
             let handle = app.handle().clone();
@@ -224,6 +249,15 @@ pub fn run() {
                 s2.start();
                 // Local API from launch, even before a printer connects.
                 sync_share(&h0).await;
+                if at_login {
+                    // Ready to print without touching anything: reconnect the last printer.
+                    for _ in 0..3 {
+                        if s2.reconnect_last().await.is_ok() {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    }
+                }
                 let mut connected = false;
                 loop {
                     match rx.recv().await {
@@ -260,7 +294,9 @@ pub fn run() {
             print_gray_wedge,
             share_info,
             set_share,
-            retry_firewall
+            retry_firewall,
+            get_autostart,
+            set_autostart
         ])
         .run(tauri::generate_context!())
         .expect("error while running Raketo");

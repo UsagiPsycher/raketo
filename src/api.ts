@@ -140,6 +140,8 @@ export const api = {
   shareInfo: () => (inTauri ? invoke<ShareInfo | null>("share_info") : Promise.resolve(null)),
   setShare: (enabled: boolean) => invoke<Settings>("set_share", { enabled }),
   retryFirewall: () => invoke<void>("retry_firewall"),
+  getAutostart: () => invoke<boolean>("get_autostart"),
+  setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),
   onShare(cb: (s: ShareInfo | null) => void): () => void {
     if (!inTauri) return () => {};
     const un = listen<ShareInfo | null>("share", (e) => cb(e.payload));

@@ -4,6 +4,7 @@ import { api, type Content, type ModelSummary, type Settings, type State } from 
 import { t } from "./i18n";
 import { toPng } from "./lib/canvas";
 import { PrinterPanel, type JobUi } from "./PrinterPanel";
+import { SettingsMenu } from "./Settings";
 import { Compose } from "./tools/Compose";
 import { Document } from "./tools/Document";
 import { Label } from "./tools/Label";
@@ -126,6 +127,8 @@ export default function App() {
             <span>{t.tools[id]}</span>
           </button>
         ))}
+        <span className="rail-spacer" />
+        {api.canManage && <SettingsMenu />}
       </nav>
       <main className="editor">
         <h1>{t.tools[tool]}</h1>

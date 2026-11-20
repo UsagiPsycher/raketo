@@ -56,6 +56,13 @@ next to the battery prints a 16-step scale. Enter the first gray step and the
 first black step, and Raketo spreads gray levels over the range that printer
 can actually render. The setting is kept per printer.
 
+**Start with the system.** In *Settings* (bottom of the left bar), turn on
+*Start with the system*. Raketo then opens minimized when you sign in and
+reconnects to the last printer, so sharing and the print API are ready
+without touching anything. It uses the usual mechanism of each system: the
+Run key on Windows, a login item (LaunchAgent) on macOS, and an XDG autostart
+entry on Linux.
+
 **Label paper.** In the Label tool, turn on *Label paper*. Before each copy,
 Raketo finds the edge of the next label with the printer's paper sensor, so
 each print lands on its own label.
